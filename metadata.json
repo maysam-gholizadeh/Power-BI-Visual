@@ -1,0 +1,6 @@
+{
+  "name": "Power BI Custom Visual Creator",
+  "description": "An interactive development environment, template generator, and AI-assisted playground for building Power BI custom visuals (pbiviz).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
