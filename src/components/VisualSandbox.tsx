@@ -1560,7 +1560,7 @@ export const VisualSandbox: React.FC<SandboxProps> = ({
     }, [] as number[]);
     worksheet["!cols"] = colWidths.map(w => ({ wch: w }));
 
-    // Apply professional formatting, number formatting and borders to cells
+    // Apply standard number formatting to numeric cells
     const range = XLSX.utils.decode_range(worksheet["!ref"] || "A1:A1");
     for (let r = range.s.r; r <= range.e.r; ++r) {
       for (let c = range.s.c; c <= range.e.c; ++c) {
@@ -1568,83 +1568,16 @@ export const VisualSandbox: React.FC<SandboxProps> = ({
         const cell = worksheet[cellRef];
         if (!cell) continue;
 
-        // Initialize style object for engines supporting cell styles (e.g. SheetJS Pro or xlsx-style)
-        cell.s = cell.s || {};
+        // Skip header rows for number formatting
+        if (r < 6) continue;
 
-        // 1. Report Headers at the top
-        if (r < 5) {
-          if (r === 0) {
-            cell.s = {
-              font: { bold: true, name: "Calibri", sz: 14, color: { rgb: "007A5C" } },
-              fill: { fgColor: { rgb: "F1F5F9" } },
-              alignment: { horizontal: "left" }
-            };
-          } else {
-            cell.s = {
-              font: { italic: true, name: "Calibri", sz: 10, color: { rgb: "475569" } },
-              alignment: { horizontal: "left" }
-            };
-          }
-          continue;
-        }
-
-        // 2. Table Column Headers
-        if (r === 5) {
-          cell.s = {
-            font: { bold: true, name: "Calibri", sz: 11, color: { rgb: "FFFFFF" } },
-            fill: { fgColor: { rgb: "007A5C" } },
-            alignment: { horizontal: c === 0 ? "left" : "right", vertical: "center" },
-            border: {
-              top: { style: "thin", color: { rgb: "CBD5E1" } },
-              bottom: { style: "medium", color: { rgb: "007A5C" } }
-            }
-          };
-          continue;
-        }
-
-        // 3. Populate and format individual row data
         const rowObj = visibleRowsToExport[r - 6];
         if (rowObj) {
-          const isTotal = rowObj.isSubtotal || rowObj.isGrandTotal;
-          const fontBold = isTotal || rowObj.level === 0;
-          const fontSz = rowObj.isGrandTotal ? 12 : 11;
-
-          // Resolve setting colors or fall back to high-fidelity defaults
-          const subtotalBgHex = (settings.subtotalBgColor || "#f8fafc").replace("#", "");
-          const subtotalTextHex = (settings.subtotalTextColor || "#0f172a").replace("#", "");
-          const grandtotalBgHex = (settings.grandtotalBgColor || "#f1f5f9").replace("#", "");
-          const grandtotalTextHex = (settings.grandtotalTextColor || "#0f172a").replace("#", "");
-          const rowBgHex = (settings.rowBgColor || "#ffffff").replace("#", "");
-          const rowTextHex = (settings.rowTextColor || "#334155").replace("#", "");
-
-          const bgHex = rowObj.isGrandTotal
-            ? grandtotalBgHex
-            : rowObj.isSubtotal
-              ? subtotalBgHex
-              : rowBgHex;
-
-          const textHex = rowObj.isGrandTotal
-            ? grandtotalTextHex
-            : rowObj.isSubtotal
-              ? subtotalTextHex
-              : rowTextHex;
-
           const isFirstCol = c === 0;
           const isLastCol = c === range.e.c;
           const isNumericCol = !isFirstCol && !isLastCol;
-          const align = isFirstCol || isLastCol ? "left" : "right";
 
-          cell.s = {
-            font: { bold: fontBold, name: "Calibri", sz: fontSz, color: { rgb: textHex } },
-            fill: { fgColor: { rgb: bgHex } },
-            alignment: { horizontal: align, vertical: "center", indent: isFirstCol ? rowObj.level : 0 },
-            border: {
-              bottom: { style: rowObj.isGrandTotal ? "double" : isTotal ? "thin" : "hair", color: { rgb: "E2E8F0" } },
-              top: { style: isTotal ? "thin" : "none", color: { rgb: "E2E8F0" } }
-            }
-          };
-
-          // 4. Standard Number formats (Supported natively in SheetJS Community Edition)
+          // Standard Number formats (Supported natively in SheetJS Community Edition)
           if (isNumericCol && typeof cell.v === "number") {
             const colHeader = headers[c] || "";
             const colHeaderLower = colHeader.toLowerCase();
@@ -1669,8 +1602,18 @@ export const VisualSandbox: React.FC<SandboxProps> = ({
 
     try {
       addLog(`Initiating direct client-side export of "${downloadFilename}"...`);
-      // Use data URI as primary because it bypasses allow-downloads iframe sandbox blocks reliably
-      const excelBase64 = XLSX.write(workbook, { bookType: "xlsx", type: "base64" });
+      // Write workbook as binary array (not base64 directly to avoid format corruption issues)
+      const wbOut = XLSX.write(workbook, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
+
+      // Convert ArrayBuffer to binary string
+      const uint8Array = new Uint8Array(wbOut);
+      let binaryStr = "";
+      for (let i = 0; i < uint8Array.length; i++) {
+        binaryStr += String.fromCharCode(uint8Array[i]);
+      }
+
+      // Build base64 from actual binary bytes
+      const excelBase64 = btoa(binaryStr);
       const dataUri = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${excelBase64}`;
       
       const link = document.createElement("a");
@@ -1685,7 +1628,7 @@ export const VisualSandbox: React.FC<SandboxProps> = ({
     } catch (err) {
       console.warn("Data URI export failed, attempting standard Blob fallback:", err);
       try {
-        const rawArray = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+        const rawArray = XLSX.write(workbook, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
         const blob = new Blob([rawArray], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
         const url = URL.createObjectURL(blob);
         

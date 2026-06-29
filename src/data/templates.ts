@@ -1874,15 +1874,25 @@ export class ProfitbaseFinancialMatrix implements IVisual {
             const workbook = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(workbook, worksheet, "Financial Statement");
 
-            // Write binary xlsx stream as base64 structure
-            const excelBase64 = XLSX.write(workbook, { bookType: "xlsx", type: "base64" });
+            // Write workbook as binary array (not base64 directly to avoid format corruption issues)
+            const wbOut = XLSX.write(workbook, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
+
+            // Convert ArrayBuffer to binary string
+            const uint8Array = new Uint8Array(wbOut);
+            let binaryStr = "";
+            for (let i = 0; i < uint8Array.length; i++) {
+                binaryStr += String.fromCharCode(uint8Array[i]);
+            }
+
+            // Build base64 from actual binary bytes
+            const excelBase64 = btoa(binaryStr);
 
             // Power BI Custom Visual Host Download/Export Service Integration (blocks sandbox iframe issues in app.powerbi.com)
             const downloadService = this.host && this.host.downloadService;
             if (downloadService) {
                 if (typeof downloadService.exportVisualsContent === "function") {
                     try {
-                        downloadService.exportVisualsContent(excelBase64, downloadFilename, "xlsx", "Excel Spreadsheet")
+                        downloadService.exportVisualsContent(excelBase64, downloadFilename, "base64", "xlsx file")
                             .then((result: boolean) => {
                                 console.log("Custom visual exported successfully via exportVisualsContent:", result);
                             })
@@ -1897,7 +1907,7 @@ export class ProfitbaseFinancialMatrix implements IVisual {
                 
                 if (typeof downloadService.exportVisualsContentExtended === "function") {
                     try {
-                        downloadService.exportVisualsContentExtended(excelBase64, downloadFilename, "xlsx", "Excel Spreadsheet")
+                        downloadService.exportVisualsContentExtended(excelBase64, downloadFilename, "base64", "xlsx file")
                             .then((result: any) => {
                                 console.log("Custom visual exported successfully via exportVisualsContentExtended:", result);
                             })
@@ -1940,8 +1950,7 @@ export class ProfitbaseFinancialMatrix implements IVisual {
             } catch (fallbackErr) {
                 console.error("Data URI fallback failed, trying blob URL as absolute last resort:", fallbackErr);
                 try {
-                    const rawArray = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
-                    const blob = new Blob([rawArray], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+                    const blob = new Blob([wbOut], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
                     const url = URL.createObjectURL(blob);
                     const link = document.createElement("a");
                     link.href = url;
