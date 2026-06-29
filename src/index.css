@@ -5,6 +5,8 @@
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Plus Jakarta Sans", "Inter", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-segoe: "Segoe UI Condensed", "Segoe UI", sans-serif;
+  --font-aptos: "Aptos", "Calibri", sans-serif;
 }
 
 /* Custom premium scrollbar styling */

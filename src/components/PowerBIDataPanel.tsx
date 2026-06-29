@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { PowerBIDataConfig, PowerBIDataRow } from "../types";
-import { Plus, Trash2, Database, Table, Code, Info, ArrowRight } from "lucide-react";
+import { Plus, Trash2, Database, Table, Code, Info, ArrowRight, List, Columns, Hash } from "lucide-react";
 
 interface DataPanelProps {
   dataConfig: PowerBIDataConfig;
@@ -51,37 +51,41 @@ export const PowerBIDataPanel: React.FC<DataPanelProps> = ({
     const valuesNode: any[] = [
       {
         source: {
-          displayName: dataConfig.measureRole,
-          queryName: `Query.${dataConfig.measureRole}`,
+          displayName: "Actual Amount",
+          queryName: `Query.Actuals`,
+          roles: { values: true },
           type: { numeric: true }
         },
         values: valuesMapped
-      }
-    ];
-
-    if (showSecondary) {
-      valuesNode.push({
+      },
+      {
         source: {
-          displayName: dataConfig.secondaryMeasureRole || "Target Measure",
-          queryName: `Query.${dataConfig.secondaryMeasureRole || "TargetMeasure"}`,
+          displayName: "Budget Amount",
+          queryName: `Query.Budget`,
+          roles: { values: true },
           type: { numeric: true }
         },
         values: secondaryMapped
-      });
-    }
+      }
+    ];
 
     const mockDataView = {
       metadata: {
         columns: [
           {
-            displayName: dataConfig.categoryRole,
-            queryName: `Query.${dataConfig.categoryRole}`,
-            roles: { category: true }
+            displayName: dataConfig.rowsRole,
+            queryName: `Query.${dataConfig.rowsRole.replace(/\s+/g, "")}`,
+            roles: { rows: true }
           },
           {
-            displayName: dataConfig.measureRole,
-            queryName: `Query.${dataConfig.measureRole}`,
-            roles: { measure: true }
+            displayName: dataConfig.columnsRole,
+            queryName: `Query.${dataConfig.columnsRole.replace(/\s+/g, "")}`,
+            roles: { columns: true }
+          },
+          {
+            displayName: dataConfig.valuesRole,
+            queryName: `Query.${dataConfig.valuesRole.replace(/\s+/g, "")}`,
+            roles: { values: true }
           }
         ]
       },
@@ -89,11 +93,21 @@ export const PowerBIDataPanel: React.FC<DataPanelProps> = ({
         categories: [
           {
             source: {
-              displayName: dataConfig.categoryRole,
-              queryName: `Query.${dataConfig.categoryRole}`,
+              displayName: dataConfig.rowsRole,
+              queryName: `Query.${dataConfig.rowsRole.replace(/\s+/g, "")}`,
+              roles: { rows: true },
               type: { string: true }
             },
             values: categoriesMapped
+          },
+          {
+            source: {
+              displayName: dataConfig.columnsRole,
+              queryName: `Query.${dataConfig.columnsRole.replace(/\s+/g, "")}`,
+              roles: { columns: true },
+              type: { string: true }
+            },
+            values: Array(categoriesMapped.length).fill("Scenario Columns")
           }
         ],
         values: valuesNode
@@ -143,28 +157,88 @@ export const PowerBIDataPanel: React.FC<DataPanelProps> = ({
       <div className="flex-1 overflow-y-auto p-4 flex flex-col min-h-0 bg-white">
         {activeTab === "table" ? (
           <div className="space-y-4 flex flex-col flex-1">
-            {/* Field configuration names */}
-            <div className="grid grid-cols-2 gap-3 bg-[#f9fafb] p-3 rounded-xl border border-gray-100 text-xs shadow-inner">
-              <div>
-                <label className="block text-[9px] font-bold text-gray-450 text-gray-400 uppercase tracking-wider">Category Role</label>
-                <div className="mt-1 font-mono text-gray-800 bg-white border border-gray-100 px-2 py-1 rounded text-[11px] font-semibold">
-                  {dataConfig.categoryRole}
+            {/* Visual Field Wells for Rows, Columns, and Values */}
+            <div className="bg-[#f8fafc] border border-slate-200/80 p-4 rounded-xl space-y-3.5 shadow-xs">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-1">
+                <span className="font-mono text-[9px] uppercase tracking-wider text-slate-400 font-bold">Dynamic Well Fields Panel</span>
+                <span className="bg-slate-150/70 text-slate-600 font-mono text-[8px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">VISUAL ROLES</span>
+              </div>
+
+              {/* Rows Well */}
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5 justify-between">
+                  <span className="flex items-center gap-1.5 font-sans font-bold text-slate-700 text-[11px]">
+                    <List size={13} className="text-indigo-500" />
+                    <span>Rows Field</span>
+                  </span>
+                  <span className="text-[9.5px] font-mono text-slate-400">Grouping</span>
+                </div>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={dataConfig.rowsRole}
+                    onChange={(e) => onChange({ ...dataConfig, rowsRole: e.target.value })}
+                    className="w-full bg-white hover:border-slate-300 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 rounded-lg px-2.5 py-1.5 outline-none text-slate-850 font-mono font-bold text-[11px] transition-colors border border-slate-200"
+                    placeholder="Enter Rows dimension..."
+                  />
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center pointer-events-none select-none">
+                    <span className="bg-indigo-50 text-indigo-700 text-[9px] font-mono px-1.5 py-0.5 rounded font-bold uppercase tracking-wide">rows</span>
+                  </div>
                 </div>
               </div>
-              <div>
-                <label className="block text-[9px] font-bold text-gray-450 text-gray-400 uppercase tracking-wider">Measure Role</label>
-                <div className="mt-1 font-mono text-gray-800 bg-white border border-gray-100 px-2 py-1 rounded text-[11px] font-semibold">
-                  {dataConfig.measureRole}
-                  {showSecondary && <span className="text-[10px] text-gray-500 ml-1.5"> (+ Target)</span>}
+
+              {/* Columns Well */}
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5 justify-between">
+                  <span className="flex items-center gap-1.5 font-sans font-bold text-slate-700 text-[11px]">
+                    <Columns size={13} className="text-emerald-500" />
+                    <span>Columns Field</span>
+                  </span>
+                  <span className="text-[9.5px] font-mono text-slate-400">Grouping</span>
+                </div>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={dataConfig.columnsRole}
+                    onChange={(e) => onChange({ ...dataConfig, columnsRole: e.target.value })}
+                    className="w-full bg-white hover:border-slate-300 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 rounded-lg px-2.5 py-1.5 outline-none text-slate-850 font-mono font-bold text-[11px] transition-colors border border-slate-200"
+                    placeholder="Enter Columns dimension..."
+                  />
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center pointer-events-none select-none">
+                    <span className="bg-emerald-50 text-emerald-700 text-[9px] font-mono px-1.5 py-0.5 rounded font-bold uppercase tracking-wide">columns</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Values Well */}
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5 justify-between">
+                  <span className="flex items-center gap-1.5 font-sans font-bold text-slate-700 text-[11px]">
+                    <Hash size={13} className="text-amber-500" />
+                    <span>Values Field</span>
+                  </span>
+                  <span className="text-[9.5px] font-mono text-slate-400">Measure</span>
+                </div>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={dataConfig.valuesRole}
+                    onChange={(e) => onChange({ ...dataConfig, valuesRole: e.target.value })}
+                    className="w-full bg-white hover:border-slate-300 focus:border-amber-400 focus:ring-2 focus:ring-amber-100 rounded-lg px-2.5 py-1.5 outline-none text-slate-850 font-mono font-bold text-[11px] transition-colors border border-slate-200"
+                    placeholder="Enter Values measure..."
+                  />
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center pointer-events-none select-none">
+                    <span className="bg-amber-50 text-amber-700 text-[9px] font-mono px-1.5 py-0.5 rounded font-bold uppercase tracking-wide">values</span>
+                  </div>
                 </div>
               </div>
             </div>
 
             {/* Practical instructions helper link */}
-            <div className="text-gray-500 text-[11px] leading-relaxed flex items-start gap-2 bg-gray-50 p-3 rounded-lg border border-gray-100">
-              <Info size={14} className="text-gray-450 text-gray-400 shrink-0 mt-0.5" />
+            <div className="text-gray-500 text-[10.5px] leading-relaxed flex items-start gap-2 bg-gray-50 p-3 rounded-lg border border-gray-100">
+              <Info size={14} className="text-gray-400 shrink-0 mt-0.5" />
               <span>
-                Edit the items below to see how the dashboard updates. For <strong>Gauge</strong> template types, the secondary value represents target measures.
+                Simulated Report Fields options model. Modify these three visual wells to rename corporate accounts, scenario categories, or measurement roles directly inside the active <code>dataView</code> bindings.
               </span>
             </div>
 

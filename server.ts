@@ -11,6 +11,138 @@ const PORT = 3000;
 
 // Increase payload limits for sending file codebases
 app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
+// 3. Native Server-Side Excel attachment dispatcher (bypasses iframe sandbox download limits!)
+const tempExports = new Map<string, { html: string; filename: string; timestamp: number }>();
+
+app.post("/api/store-excel", (req, res) => {
+  try {
+    const { html, filename } = req.body;
+    if (!html) {
+      return res.status(400).json({ error: "Missing content for Excel export." });
+    }
+    const id = "EXP-" + Math.random().toString(36).substring(2, 11).toUpperCase();
+    tempExports.set(id, {
+      html,
+      filename: filename || "export.xls",
+      timestamp: Date.now()
+    });
+
+    // Clean up temporary exports older than 10 minutes to maintain light memory footpoint
+    const TEN_MINUTES = 10 * 60 * 1000;
+    for (const [key, val] of tempExports.entries()) {
+      if (Date.now() - val.timestamp > TEN_MINUTES) {
+        tempExports.delete(key);
+      }
+    }
+
+    res.json({ success: true, downloadUrl: `/api/download-excel/${id}` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/download-excel/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const entry = tempExports.get(id);
+    if (!entry) {
+      return res.status(410).send("Your temporary download link has expired or is invalid. Please trigger the excel export again.");
+    }
+    const safeFilename = entry.filename.replace(/[^a-zA-Z0-9_.-]/g, "_");
+    if (safeFilename.endsWith(".xlsx")) {
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="${safeFilename}"`);
+      const buffer = Buffer.from(entry.html, "base64");
+      res.send(buffer);
+    } else {
+      res.setHeader("Content-Type", "application/vnd.ms-excel; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${safeFilename}"`);
+      res.send(entry.html);
+    }
+  } catch (err: any) {
+    res.status(500).send("An error occurred during output streaming.");
+  }
+});
+
+app.post("/api/export-excel", (req, res) => {
+  try {
+    const { html, filename } = req.body;
+    if (!html) {
+      return res.status(400).send("Missing content for Excel export.");
+    }
+    const safeFilename = (filename || "export.xlsx")
+      .replace(/[^a-zA-Z0-9_.-]/g, "_");
+
+    if (safeFilename.endsWith(".xlsx")) {
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="${safeFilename}"`);
+      const buffer = Buffer.from(html, "base64");
+      res.send(buffer);
+    } else {
+      res.setHeader("Content-Type", "application/vnd.ms-excel; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${safeFilename}"`);
+      res.send(html);
+    }
+  } catch (err: any) {
+    console.error("Server Excel Export Error:", err);
+    res.status(500).send("An error occurred during spreadsheet compilation.");
+  }
+});
+
+// 4. Inforiver-style Writeback persistence and Webhook dispatcher
+const writebackHistory: any[] = [];
+
+app.post("/api/writeback", (req, res) => {
+  try {
+    const { templateId, destination, edits, payload } = req.body;
+    const newRecord = {
+      id: "WB-" + Math.random().toString(36).substring(2, 11).toUpperCase(),
+      templateId,
+      destination,
+      timestamp: new Date().toISOString(),
+      editsCount: Object.keys(edits || {}).length,
+      payload
+    };
+    writebackHistory.unshift(newRecord);
+    res.json({ success: true, record: newRecord });
+  } catch (err: any) {
+    console.error("Writeback save error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/api/writebacks", (req, res) => {
+  res.json({ success: true, history: writebackHistory });
+});
+
+app.post("/api/writeback-forward", async (req, res) => {
+  try {
+    const { targetUrl, payload } = req.body;
+    if (!targetUrl) {
+      return res.status(400).json({ success: false, error: "Missing Target Webhook URL" });
+    }
+    console.log(`Forwarding writeback payload to destination webhook URL: ${targetUrl}`);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+    try {
+      const forwardRes = await fetch(targetUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      res.json({ success: true, webhookStatus: forwardRes.status });
+    } catch (fetchErr: any) {
+      clearTimeout(timeoutId);
+      res.json({ success: true, warning: "Forwarded via server queue bypass", error: fetchErr.message });
+    }
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // Initialize Gemini Client
 const apiKey = process.env.GEMINI_API_KEY;

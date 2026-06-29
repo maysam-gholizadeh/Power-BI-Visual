@@ -7,10 +7,11 @@ import { useState, useEffect } from "react";
 import { templates } from "./data/templates";
 import { VisualSandbox } from "./components/VisualSandbox";
 import { PowerBIDataPanel } from "./components/PowerBIDataPanel";
+import { PowerBIFormatPane } from "./components/PowerBIFormatPane";
 import { CodeWorkspace } from "./components/CodeWorkspace";
 import { CopilotPanel } from "./components/CopilotPanel";
 import { DAXMeasuresPanel } from "./components/DAXMeasuresPanel";
-import { VisualTemplateType, VisualProjectFiles, PowerBIDataConfig, PowerBIVisualSettings, DAXMeasure } from "./types";
+import { VisualTemplateType, VisualProjectFiles, PowerBIDataConfig, PowerBIVisualSettings, DAXMeasure, ConditionalFormattingRule, FxConfig } from "./types";
 import { motion } from "motion/react";
 import JSZip from "jszip";
 import { 
@@ -37,9 +38,9 @@ import {
 // Initial datasets representing the default values for each report template type
 const initialDatasets: Record<VisualTemplateType, PowerBIDataConfig> = {
   matrix: {
-    categoryRole: "Financial Statement Row",
-    measureRole: "Actual Revenue / Cost",
-    secondaryMeasureRole: "Budget Revenue / Cost",
+    rowsRole: "Financial Statement Row",
+    columnsRole: "Comparison Scenario (Actual vs Budget)",
+    valuesRole: "Numeric Amount Measure",
     rows: [
       { category: "Revenue", value: 1250000, secondaryValue: 1200000 },
       { category: "  Product Sales", value: 850000, secondaryValue: 800000 },
@@ -63,13 +64,20 @@ const initialSettingsMap: Record<VisualTemplateType, PowerBIVisualSettings> = {
   matrix: {
     showTitle: true,
     titleText: "Profitbase Financial Matrix View",
+    titleBgColor: "#f1f5f9",
+    titleTextColor: "#1e293b",
     accentColor: "#0f172a",
     borderColor: "#e2e8f0",
     backgroundColor: "#ffffff",
-    fontSize: 12,
+    fontSize: 11,
     showTooltip: true,
     enableAnimation: true,
     hideEmptyExpand: false,
+    enableDownloadAsExcel: true,
+    enableSorting: false,
+    enableVisualSearch: false,
+    showGroupExpand: true,
+    enableColumnExpansion: true,
     daxMeasures: [
       {
         id: "dax-avg",
@@ -82,6 +90,117 @@ const initialSettingsMap: Record<VisualTemplateType, PowerBIVisualSettings> = {
         name: "Total Volume (Actual + Budget)",
         formula: "[Actual] + [Budget]",
         expressionType: "sum"
+      }
+    ],
+    enableRowVarianceFormatting: false,
+    enableRowHeatmap: false,
+    columnFormattingTarget: "none",
+    columnFormattingType: "none",
+    positiveColor: "#10b981",
+    negativeColor: "#ef4444",
+    selectedTheme: "light",
+    fontFamily: "sans",
+    rowPadding: "cozy",
+    showGridLines: true,
+    highlightSubtotals: true,
+    showAccentBorders: true,
+    columnWidthMode: "auto",
+    columnWidthValue: 120,
+    rowHeightMode: "auto",
+    rowHeightValue: 32,
+    formatStyle: "whole",
+    showCommentary: true,
+    enableExpandedHighlight: false,
+    expandedParentBgColor: "#f8fafc",
+    expandedParentTextColor: "#0f172a",
+    expandedChildBgColor: "#ffffff",
+    expandedChildTextColor: "#334155",
+    enableDaxCondFormatting: false,
+    daxCondFormatMode: "rules",
+    daxCondFieldValueTarget: "background",
+    daxCondMeasureId: "dax-sum",
+    daxCondTarget: "all",
+    daxCondCondition: "greater",
+    daxCondValue1: 1000000,
+    daxCondValue2: 2000000,
+    daxCondBgColor: "#f0fdf4",
+    daxCondTextColor: "#15803d",
+    customRules: [
+      {
+        id: "rule-1",
+        target: "row-header",
+        operator: "contains",
+        value: "Revenue",
+        bgColor: "#e6fffa",
+        textColor: "#007d67",
+        isBold: true
+      },
+      {
+        id: "rule-2",
+        target: "variancePct",
+        operator: "less",
+        value: "0",
+        bgColor: "#fff5f5",
+        textColor: "#e53e3e",
+        isBold: true
+      }
+    ],
+    cfRules: [
+      {
+        id: "cf-rule-1",
+        name: "High Performance Sales (Rule Engine)",
+        isEnabled: true,
+        engine: "rule",
+        priority: 3,
+        targetType: "cell",
+        targetColumn: "actual",
+        ruleField: "actual",
+        ruleOperator: "greater",
+        ruleValue1: "1500000",
+        style: {
+          background: "#ecfdf5",
+          foreground: "#047857",
+          fontWeight: "bold",
+          borderColor: "#10b981",
+          icon: "check",
+          tooltip: "High Sales Volume: Exceeds 1.5M threshold"
+        }
+      },
+      {
+        id: "cf-rule-2",
+        name: "Expense Accounts Flag (Text Engine)",
+        isEnabled: true,
+        engine: "text",
+        priority: 2,
+        targetType: "row",
+        textField: "name",
+        textOperator: "startsWith",
+        textValue: "9",
+        style: {
+          background: "#fff5f5",
+          foreground: "#b91c1c",
+          fontWeight: "bold",
+          fontStyle: "italic",
+          icon: "flag",
+          tooltip: "Cost Center: Row matches expense accounts code starting with 9"
+        }
+      },
+      {
+        id: "cf-rule-3",
+        name: "Profit Warning Indicator (Expression Engine)",
+        isEnabled: true,
+        engine: "expression",
+        priority: 1,
+        targetType: "row",
+        expressionString: "Profit < 0 AND Sales > 500000",
+        style: {
+          background: "#fffbeb",
+          foreground: "#b45309",
+          fontWeight: "bold",
+          icon: "warning",
+          borderColor: "#f59e0b",
+          tooltip: "Underperforming warning: negative profit with high sales volume"
+        }
       }
     ]
   }
@@ -103,10 +222,161 @@ export default function App() {
   const [datasetMap, setDatasetMap] = useState<Record<VisualTemplateType, PowerBIDataConfig>>(initialDatasets);
   const [settingsMap, setSettingsMap] = useState<Record<VisualTemplateType, PowerBIVisualSettings>>(initialSettingsMap);
 
-  const [activeTab, setActiveTab] = useState<"fields" | "format" | "dax" | "copilot">("fields");
+  const handleAddRule = () => {
+    const newRule: ConditionalFormattingRule = {
+      id: "rule-" + Date.now(),
+      target: "row-header",
+      operator: "contains",
+      value: "",
+      bgColor: "#fef3c7",
+      textColor: "#92400e",
+      isBold: true
+    };
+    setSettingsMap(prev => {
+      const activeRules = prev[activeTemplate]?.customRules || [];
+      return {
+        ...prev,
+        [activeTemplate]: {
+          ...prev[activeTemplate],
+          customRules: [...activeRules, newRule]
+        }
+      };
+    });
+  };
+
+  const handleUpdateRule = (ruleId: string, updates: Partial<ConditionalFormattingRule>) => {
+    setSettingsMap(prev => {
+      const activeRules = prev[activeTemplate]?.customRules || [];
+      const updatedRules = activeRules.map(rule => 
+        rule.id === ruleId ? { ...rule, ...updates } : rule
+      );
+      return {
+        ...prev,
+        [activeTemplate]: {
+          ...prev[activeTemplate],
+          customRules: updatedRules
+        }
+      };
+    });
+  };
+
+  const handleDeleteRule = (ruleId: string) => {
+    setSettingsMap(prev => {
+      const activeRules = prev[activeTemplate]?.customRules || [];
+      const updatedRules = activeRules.filter(rule => rule.id !== ruleId);
+      return {
+        ...prev,
+        [activeTemplate]: {
+          ...prev[activeTemplate],
+          customRules: updatedRules
+        }
+      };
+    });
+  };
+
+  const handleAddCFRule = () => {
+    const newRule = {
+      id: "cf-" + Date.now(),
+      name: "New Advanced Rule",
+      isEnabled: true,
+      engine: "rule" as const,
+      priority: 5,
+      targetType: "cell" as const,
+      targetColumn: "actual",
+      ruleField: "actual",
+      ruleOperator: "greater" as const,
+      ruleValue1: "100000",
+      ruleValue2: "",
+      textField: "name",
+      textOperator: "startsWith" as const,
+      textValue: "",
+      expressionString: "Actual > 100000",
+      measureId: currentSettings.daxMeasures && currentSettings.daxMeasures.length > 0 ? currentSettings.daxMeasures[0].id : "",
+      measureTargetProperty: "background" as const,
+      style: {
+        background: "#f3f4f6",
+        foreground: "#111827",
+        fontWeight: "normal",
+        fontStyle: "normal",
+        textDecoration: "none",
+        borderColor: "",
+        borderThickness: "",
+        borderRadius: "",
+        icon: "",
+        opacity: 1,
+        tooltip: "",
+        animation: ""
+      }
+    };
+    setSettingsMap(prev => {
+      const activeRules = prev[activeTemplate]?.cfRules || [];
+      return {
+        ...prev,
+        [activeTemplate]: {
+          ...prev[activeTemplate],
+          cfRules: [...activeRules, newRule]
+        }
+      };
+    });
+  };
+
+  const handleUpdateCFRule = (ruleId: string, updates: any) => {
+    setSettingsMap(prev => {
+      const activeRules = prev[activeTemplate]?.cfRules || [];
+      const updatedRules = activeRules.map(rule => 
+        rule.id === ruleId ? { ...rule, ...updates } : rule
+      );
+      return {
+        ...prev,
+        [activeTemplate]: {
+          ...prev[activeTemplate],
+          cfRules: updatedRules
+        }
+      };
+    });
+  };
+
+  const handleDeleteCFRule = (ruleId: string) => {
+    setSettingsMap(prev => {
+      const activeRules = prev[activeTemplate]?.cfRules || [];
+      const updatedRules = activeRules.filter(rule => rule.id !== ruleId);
+      return {
+        ...prev,
+        [activeTemplate]: {
+          ...prev[activeTemplate],
+          cfRules: updatedRules
+        }
+      };
+    });
+  };
+
+  const [activeTab, setActiveTab] = useState<"fields" | "format" | "rules" | "dax" | "copilot">("fields");
+  const [formatSubTab, setFormatSubTab] = useState<"visual" | "general">("visual");
+  const [formatSearchQuery, setFormatSearchQuery] = useState<string>("");
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
+    license: true,
+    download: false,
+    commenting: false,
+    sort: false,
+    search: false,
+    group: false,
+    grid: false,
+    columnHeaders: false,
+    columnExpansion: false,
+    columnStyles: false,
+    title: false,
+    canvas: false,
+    scaleUnits: false,
+    headerIcons: false,
+  });
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [showGuide, setShowGuide] = useState(false);
+
+  // States for handling visual-settings "fx" formatting configuration
+  const [activeFxProperty, setActiveFxProperty] = useState<string | null>(null);
+  const [activeFxLabel, setActiveFxLabel] = useState<string>("");
+  const [fxEditState, setFxEditState] = useState<FxConfig | null>(null);
 
   // Quick helper to write active file mods
   const handleFileChange = (fileName: keyof VisualProjectFiles, content: string) => {
@@ -137,6 +407,59 @@ export default function App() {
       setInfoMessage(`Reset current ${originalTemplate.name} code and models back to original boilertrack defaults.`);
       setTimeout(() => setInfoMessage(null), 3500);
     }
+  };
+
+  const openFxConfig = (property: string, label: string) => {
+    setActiveFxProperty(property);
+    setActiveFxLabel(label);
+    const existing = currentSettings.fxSettings?.[property] || {
+      measureId: currentSettings.daxMeasures?.[0]?.id || "",
+      mode: "rules",
+      operator: "greater",
+      value: 100000,
+      resultValue: property.toLowerCase().includes("bg") || property === "accentColor" ? "#10b981" : "#15803d",
+      fallbackValue: property.toLowerCase().includes("bg") || property === "accentColor" ? "#ef4444" : "#b91c1c"
+    };
+    setFxEditState(existing as any);
+  };
+
+  const saveFxConfig = () => {
+    if (!activeFxProperty || !fxEditState) return;
+    setSettingsMap(prev => {
+      const active = prev[activeTemplate];
+      const fxMap = { ...(active.fxSettings || {}) };
+      fxMap[activeFxProperty] = fxEditState;
+      return {
+        ...prev,
+        [activeTemplate]: {
+          ...active,
+          fxSettings: fxMap
+        }
+      };
+    });
+    setActiveFxProperty(null);
+    setFxEditState(null);
+    setInfoMessage(`Successfully bound the formatting of "${activeFxLabel}" to the selected measure metrics.`);
+    setTimeout(() => setInfoMessage(null), 3000);
+  };
+
+  const removeFxConfig = (property: string) => {
+    setSettingsMap(prev => {
+      const active = prev[activeTemplate];
+      const fxMap = { ...(active.fxSettings || {}) };
+      delete fxMap[property];
+      return {
+        ...prev,
+        [activeTemplate]: {
+          ...active,
+          fxSettings: fxMap
+        }
+      };
+    });
+    setActiveFxProperty(null);
+    setFxEditState(null);
+    setInfoMessage(`Removed DAX measure binding for "${activeFxLabel}". Restored back to flat preset selections.`);
+    setTimeout(() => setInfoMessage(null), 3000);
   };
 
   // Triggered by Visual Copilot after AI refactors files
@@ -176,22 +499,208 @@ export default function App() {
 
   // ZIP workspace exporter using client-side JSZip
   const handleExportZip = async () => {
-    const activeProject = projectFilesMap[activeTemplate];
     const originalTemplate = templates.find(t => t.id === activeTemplate);
+    const activeProject = projectFilesMap[activeTemplate];
     const vizName = originalTemplate ? originalTemplate.name.replace(/\s+/g, "") : "CustomPowerBI";
 
     try {
       const zip = new JSZip();
       
+      // Load current visual templates definitions
+      let exportedVisualTS = activeProject["src/visual.ts"] || (originalTemplate ? originalTemplate.files["src/visual.ts"] : "");
+      let exportedCapabilitiesJSON = activeProject["capabilities.json"] || (originalTemplate ? originalTemplate.files["capabilities.json"] : "");
+
+      // Pre-compile the custom visual config settings template values
+      const exportSettings = {
+        gridTheme: {
+          selectedTheme: currentSettings.selectedTheme || "light",
+          fontFamily: currentSettings.fontFamily || "sans",
+          fontSize: currentSettings.fontSize ?? 11,
+          rowPadding: currentSettings.rowPadding || "cozy",
+          showGridLines: currentSettings.showGridLines ?? true,
+          highlightSubtotals: currentSettings.highlightSubtotals ?? true,
+          showAccentBorders: currentSettings.showAccentBorders ?? true,
+          columnWidthMode: currentSettings.columnWidthMode || "auto",
+          columnWidthValue: currentSettings.columnWidthValue ?? 120,
+          rowHeightMode: currentSettings.rowHeightMode || "auto",
+          rowHeightValue: currentSettings.rowHeightValue ?? 32,
+          headerBgColor: currentSettings.headerBgColor || "",
+          headerTextColor: currentSettings.headerTextColor || "",
+          rowBgColor: currentSettings.rowBgColor || "",
+          rowTextColor: currentSettings.rowTextColor || "",
+          subtotalBgColor: currentSettings.subtotalBgColor || "",
+          subtotalTextColor: currentSettings.subtotalTextColor || "",
+          grandtotalBgColor: currentSettings.grandtotalBgColor || "",
+          grandtotalTextColor: currentSettings.grandtotalTextColor || "",
+          hoverBgColor: currentSettings.hoverBgColor || "",
+          gridLineColor: currentSettings.gridLineColor || "",
+          accentColor: currentSettings.accentColor || "",
+          hideEmptyExpand: currentSettings.hideEmptyExpand ?? false
+        },
+        toolbarSettings: {
+          showToolbar: true,
+          showTitle: currentSettings.showTitle ?? true,
+          titleText: currentSettings.titleText || "Financial Matrix",
+          titleBgColor: currentSettings.titleBgColor || "",
+          titleTextColor: currentSettings.titleTextColor || "",
+          showExpandCollapse: true,
+          showExport: true,
+          showMaximize: true
+        },
+        numberFormatting: {
+          formatStyle: currentSettings.formatStyle || "whole"
+        },
+        commentaryColumn: {
+          showCommentary: currentSettings.showCommentary ?? true
+        },
+        conditionalFormatting: {
+          enableRowVarianceFormatting: currentSettings.enableRowVarianceFormatting ?? false,
+          enableRowHeatmap: currentSettings.enableRowHeatmap ?? false,
+          columnFormattingTarget: currentSettings.columnFormattingTarget || "none",
+          columnFormattingType: currentSettings.columnFormattingType || "none",
+          positiveColor: currentSettings.positiveColor || "#10b981",
+          negativeColor: currentSettings.negativeColor || "#ef4444",
+          enableExpandedHighlight: currentSettings.enableExpandedHighlight ?? false,
+          expandedParentBgColor: currentSettings.expandedParentBgColor || "#f8fafc",
+          expandedParentTextColor: currentSettings.expandedParentTextColor || "#0f172a",
+          expandedChildBgColor: currentSettings.expandedChildBgColor || "#ffffff",
+          expandedChildTextColor: currentSettings.expandedChildTextColor || "#334155",
+          enableDaxCondFormatting: currentSettings.enableDaxCondFormatting ?? false,
+          daxCondFormatMode: currentSettings.daxCondFormatMode || "rules",
+          daxCondFieldValueTarget: currentSettings.daxCondFieldValueTarget || "background",
+          daxCondMeasureId: currentSettings.daxCondMeasureId || "",
+          daxCondTarget: currentSettings.daxCondTarget || "all",
+          daxCondCondition: currentSettings.daxCondCondition || "greater",
+          daxCondValue1: currentSettings.daxCondValue1 ?? 100000,
+          daxCondValue2: currentSettings.daxCondValue2 ?? 1000000,
+          daxCondBgColor: currentSettings.daxCondBgColor || "#f0fdf4",
+          daxCondTextColor: currentSettings.daxCondTextColor || "#15803d",
+          daxMeasuresJson: JSON.stringify(currentSettings.daxMeasures || []),
+          customRulesJson: JSON.stringify(currentSettings.customRules || [])
+        }
+      };
+
+      // Substitute the currentSettings definition dynamically inside visual.ts
+      const startMarker = "private currentSettings = {";
+      const startIdx = exportedVisualTS.indexOf(startMarker);
+      if (startIdx !== -1) {
+        const endIdx = exportedVisualTS.indexOf("};", startIdx);
+        if (endIdx !== -1) {
+          const pre = exportedVisualTS.substring(0, startIdx);
+          const post = exportedVisualTS.substring(endIdx + 2);
+          const settingsValueStr = `private currentSettings = ${JSON.stringify(exportSettings, null, 12)}`;
+          exportedVisualTS = pre + settingsValueStr + post;
+        }
+      }
+
+      // Automatically patch any stripped backslashes in regexes in the exported visual.ts
+      exportedVisualTS = exportedVisualTS
+        .replace(/\/LEFTs\*\[\(\[\^\]\]\+\)\]s\*,s\*\(\[0-9\]\+\)\/gi/g, "/LEFT\\\\s*\\\\[([^\\\\]]+)\\\\]\\\\s*,\\\\s*([0-9]+)/gi")
+        .replace(/\/RIGHTs\*\[\(\[\^\]\]\+\)\]s\*,s\*\(\[0-9\]\+\)\/gi/g, "/RIGHT\\\\s*\\\\[([^\\\\]]+)\\\\]\\\\s*,\\\\s*([0-9]+)/gi")
+        .replace(/\/DIVIDEs\*\\\(\(\[\^,\]\+\),\(\[\^\)\]\+\)\\\)\/gi/g, "/DIVIDE\\\\s*\\\\(([^,]+),([^)]+)\\\\)/gi")
+        .replace(/\/AVERAGEs\*\\\(\(\[\^,\]\+\),\(\[\^\)\]\+\)\\\)\/gi/g, "/AVERAGE\\\\s*\\\\(([^,]+),([^)]+)\\\\)/gi")
+        .replace(/\/SUMs\*\\\(\(\[\^,\]\+\),\(\[\^\)\]\+\)\\\)\/gi/g, "/SUM\\\\s*\\\\(([^,]+),([^)]+)\\\\)/gi")
+        .replace(/\/LEFTs\*\\\(\(\[\^,\]\+\),\(\[\^\)\]\+\)\\\)\/gi/g, "/LEFT\\\\s*\\\\(([^,]+),([^)]+)\\\\)/gi")
+        .replace(/\/RIGHTs\*\\\(\(\[\^,\]\+\),\(\[\^\)\]\+\)\\\)\/gi/g, "/RIGHT\\\\s*\\\\(([^,]+),([^)]+)\\\\)/gi")
+        .replace(/\/MIDs\*\\\(\(\[\^,\]\+\),\(\[\^,\]\+\),\(\[\^\)\]\+\)\\\)\/gi/g, "/MID\\\\s*\\\\(([^,]+),([^,]+),([^)]+)\\\\)/gi")
+        .replace(/\/UPPERs\*\\\(\(\[\^\)\]\+\)\\\)\/gi/g, "/UPPER\\\\s*\\\\(([^)]+)\\\\)/gi")
+        .replace(/\/LOWERs\*\\\(\(\[\^\)\]\+\)\\\)\/gi/g, "/LOWER\\\\s*\\\\(([^)]+)\\\\)/gi")
+        .replace(/\/TRIMs\*\\\(\(\[\^\)\]\+\)\\\)\/gi/g, "/TRIM\\\\s*\\\\(([^)]+)\\\\)/gi")
+        .replace(/\/LENs\*\\\(\(\[\^\)\]\+\)\\\)\/gi/g, "/LEN\\\\s*\\\\(([^)]+)\\\\)/gi")
+        .replace(/\/IFs\*\\\(/gi, "/IF\\\\s*\\\\(")
+        .replace(/\.match\(\/\^\\\(\[0-9\.-\/\]\+\)\\\)\/\)/g, ".match(/^([0-9\\\\.\\\\-\\\\/]+)/)");
+
       // root structures
       zip.file("pbiviz.json", activeProject["pbiviz.json"]);
-      zip.file("capabilities.json", activeProject["capabilities.json"]);
+      zip.file("capabilities.json", exportedCapabilitiesJSON);
       zip.file("package.json", activeProject["package.json"]);
       zip.file("tsconfig.json", activeProject["tsconfig.json"]);
 
       // child directory directories
-      zip.folder("src")?.file("visual.ts", activeProject["src/visual.ts"]);
+      zip.folder("src")?.file("visual.ts", exportedVisualTS);
       zip.folder("style")?.file("visual.less", activeProject["style/visual.less"]);
+
+      // Generate dynamic high-fidelity glowing circular network sphere image for assets/icon.png
+      const generateCustomIconBase64 = (): string => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 128;
+        canvas.height = 128;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return "iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAABmJLR0QA/wD/AP+gvaeTAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAB3RJTUUH5gMJDgkoB8+iWAAAAElJREFUeNrt0gENAAAAwqD3T20ON6hAYcCgQYMGDRo0aNCgQYMGDRo0aNCgQYMGDRo0aNCgQYMGDRo0aNCgQYMGDRo2aNCgQYMHG8DfAAn6p6pZfInEAAAAAElFTkSuQmCC";
+
+        // 1. Draw rounded square background
+        const rad = 28;
+        ctx.beginPath();
+        ctx.moveTo(rad, 0);
+        ctx.lineTo(128 - rad, 0);
+        ctx.quadraticCurveTo(128, 0, 128, rad);
+        ctx.lineTo(128, 128 - rad);
+        ctx.quadraticCurveTo(128, 128, 128 - rad, 128);
+        ctx.lineTo(rad, 128);
+        ctx.quadraticCurveTo(0, 128, 0, 128 - rad);
+        ctx.lineTo(0, rad);
+        ctx.quadraticCurveTo(0, 0, rad, 0);
+        ctx.closePath();
+
+        const grad = ctx.createLinearGradient(0, 0, 128, 128);
+        grad.addColorStop(0, "#4f14a0"); // rich royal purple
+        grad.addColorStop(0.5, "#251368"); // deep indigo
+        grad.addColorStop(1, "#110530"); // dark purple
+        ctx.fillStyle = grad;
+        ctx.fill();
+
+        // 2. Draw glowing network sphere
+        const cx = 64;
+        const cy = 64;
+        const r = 36;
+        const numNodes = 8;
+        const nodeCoords: { x: number; y: number }[] = [];
+
+        for (let i = 0; i < numNodes; i++) {
+          const angle = (i * 2 * Math.PI) / numNodes;
+          nodeCoords.push({
+            x: cx + r * Math.cos(angle),
+            y: cy + r * Math.sin(angle)
+          });
+        }
+
+        // Draw interconnected curved arcs with glow shadow
+        ctx.shadowColor = "#818cf8";
+        ctx.shadowBlur = 8;
+        ctx.lineWidth = 1.8;
+        ctx.strokeStyle = "rgba(167, 139, 250, 0.75)";
+
+        nodeCoords.forEach((node, i) => {
+          // Connect to next nodes with curved arcs
+          for (let offset = 2; offset <= 4; offset++) {
+            const targetNode = nodeCoords[(i + offset) % numNodes];
+            ctx.beginPath();
+            ctx.moveTo(node.x, node.y);
+            const midX = (node.x + targetNode.x) / 2;
+            const midY = (node.y + targetNode.y) / 2;
+            const ctrlX = midX + (cx - midX) * 0.35;
+            const ctrlY = midY + (cy - midY) * 0.35;
+            ctx.quadraticCurveTo(ctrlX, ctrlY, targetNode.x, targetNode.y);
+            ctx.stroke();
+          }
+        });
+
+        // Draw glowing white circular nodes
+        ctx.shadowColor = "#ffffff";
+        ctx.shadowBlur = 10;
+        ctx.fillStyle = "#ffffff";
+
+        nodeCoords.forEach((node) => {
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, 4, 0, 2 * Math.PI);
+          ctx.fill();
+        });
+
+        return canvas.toDataURL("image/png").split(",")[1];
+      };
+
+      const customIconBase64 = generateCustomIconBase64();
+      zip.folder("assets")?.file("icon.png", customIconBase64, { base64: true });
 
       // generate zip blob
       const content = await zip.generateAsync({ type: "blob" });
@@ -210,7 +719,245 @@ export default function App() {
   };
 
   const getTemplateIcon = (id: VisualTemplateType) => {
-    return <Table size={15} />;
+    return (
+      <svg className="w-5 h-5 text-violet-400" viewBox="0 0 64 64" fill="none">
+        <defs>
+          <filter id="neon-glow-sm" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="1" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+        <g stroke="currentColor" strokeWidth="1.5" opacity="0.8">
+          <path d="M 50 32 Q 32 32, 14 32" />
+          <path d="M 32 14 Q 32 32, 32 50" />
+          <path d="M 44.7 19.3 Q 32 32, 19.3 44.7" />
+          <path d="M 19.3 19.3 Q 32 32, 44.7 44.7" />
+        </g>
+        <circle cx="50" cy="32" r="2" fill="#ffffff" filter="url(#neon-glow-sm)" />
+        <circle cx="44.7" cy="44.7" r="2" fill="#ffffff" filter="url(#neon-glow-sm)" />
+        <circle cx="32" cy="50" r="2" fill="#ffffff" filter="url(#neon-glow-sm)" />
+        <circle cx="19.3" cy="44.7" r="2" fill="#ffffff" filter="url(#neon-glow-sm)" />
+        <circle cx="14" cy="32" r="2" fill="#ffffff" filter="url(#neon-glow-sm)" />
+        <circle cx="19.3" cy="19.3" r="2" fill="#ffffff" filter="url(#neon-glow-sm)" />
+        <circle cx="32" cy="14" r="2" fill="#ffffff" filter="url(#neon-glow-sm)" />
+        <circle cx="44.7" cy="19.3" r="2" fill="#ffffff" filter="url(#neon-glow-sm)" />
+      </svg>
+    );
+  };
+
+  const renderFxModal = () => {
+    if (!activeFxProperty || !fxEditState) return null;
+
+    const isBg = activeFxProperty.toLowerCase().includes("bg") || activeFxProperty === "accentColor";
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-fade-in [id='fx-modal-root']">
+        <div className="bg-white rounded-2xl shadow-2xl border border-slate-100 w-full max-w-lg overflow-hidden flex flex-col font-sans [id='fx-modal-box']">
+          
+          {/* Modal Header */}
+          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50 text-slate-800">
+            <div className="flex items-center gap-2">
+              <span className="text-base">📊</span>
+              <div>
+                <h3 className="font-bold text-[9px] uppercase tracking-wider text-slate-400 font-mono">Dynamic FX Formatting Engine</h3>
+                <p className="font-bold text-xs text-slate-800">Assign DAX Rule - {activeFxLabel}</p>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                setActiveFxProperty(null);
+                setFxEditState(null);
+              }}
+              className="text-slate-400 hover:text-slate-600 font-bold text-base cursor-pointer"
+            >
+              &times;
+            </button>
+          </div>
+
+          <div className="p-5 space-y-4 text-[11px] overflow-y-auto max-h-[70vh]">
+            {/* 1. Measure Select */}
+            <div className="space-y-1">
+              <label className="text-[9.5px] font-bold text-slate-400 uppercase font-mono block">Format based on DAX Measure / Column</label>
+              <select
+                value={fxEditState.measureId || ""}
+                onChange={(e) => setFxEditState(prev => prev ? { ...prev, measureId: e.target.value } : null)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-semibold text-slate-800 outline-none"
+              >
+                <option value="">-- Choose registered DAX measure --</option>
+                {(currentSettings.daxMeasures || []).map((m) => (
+                  <option key={m.id} value={m.id}>{m.name} ({m.formula})</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-slate-400 leading-normal">
+                If the custom visual contains registered Calculated Columns or virtual DAX statements, they will be computed contextually per row or header state.
+              </p>
+            </div>
+
+            {/* 2. Format Mode Select */}
+            <div className="space-y-1">
+              <label className="text-[9.5px] font-bold text-slate-400 uppercase font-mono block">Formatting Mode</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setFxEditState(prev => prev ? { ...prev, mode: "rules" } : null)}
+                  className={`py-1.5 rounded-lg border font-semibold text-[10.5px] cursor-pointer transition-all ${
+                    fxEditState.mode === "rules"
+                      ? "border-black bg-black text-white"
+                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  Conditional Rules
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFxEditState(prev => prev ? { ...prev, mode: "field" } : null)}
+                  className={`py-1.5 rounded-lg border font-semibold text-[10.5px] cursor-pointer transition-all ${
+                    fxEditState.mode === "field"
+                      ? "border-black bg-black text-white"
+                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  Field Sign-based Color
+                </button>
+              </div>
+            </div>
+
+            {/* Mode Specific parameters */}
+            {fxEditState.mode === "rules" ? (
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-3">
+                <span className="text-[9px] font-bold text-slate-500 uppercase font-mono block">Rule Conditions Mapping</span>
+                
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <span className="text-[9px] text-slate-400 font-bold block uppercase tracking-wider">If value is</span>
+                    <select
+                      value={fxEditState.operator || "greater"}
+                      onChange={(e) => setFxEditState(prev => prev ? { ...prev, operator: e.target.value as any } : null)}
+                      className="w-full bg-white border border-slate-200 rounded px-2 py-1 font-semibold text-slate-855"
+                    >
+                      <option value="greater">Greater Than (&gt;)</option>
+                      <option value="less">Less Than (&lt;)</option>
+                      <option value="equal">Equals (=)</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <span className="text-[9px] text-slate-400 font-bold block uppercase tracking-wider">Comparison Threshold</span>
+                    <input
+                      type="number"
+                      value={fxEditState.value ?? 0}
+                      onChange={(e) => setFxEditState(prev => prev ? { ...prev, value: parseFloat(e.target.value) || 0 } : null)}
+                      className="w-full bg-white border border-slate-200 rounded px-2 py-1 font-bold text-slate-800 text-right"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <div className="space-y-1">
+                    <span className="text-[9px] text-slate-400 font-bold block uppercase tracking-wider">
+                      {isBg ? "Matched Color Code" : "Matched Text Color"}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="color"
+                        value={fxEditState.resultValue || "#10b981"}
+                        onChange={(e) => setFxEditState(prev => prev ? { ...prev, resultValue: e.target.value } : null)}
+                        className="w-6 h-6 rounded border border-slate-200 bg-transparent shrink-0 cursor-pointer"
+                      />
+                      <span className="font-mono text-slate-600 font-semibold uppercase">{fxEditState.resultValue || "#10b981"}</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <span className="text-[9px] text-slate-400 font-bold block uppercase tracking-wider">
+                      {isBg ? "Otherwise Color" : "Otherwise Text Color"}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="color"
+                        value={fxEditState.fallbackValue || "#ef4444"}
+                        onChange={(e) => setFxEditState(prev => prev ? { ...prev, fallbackValue: e.target.value } : null)}
+                        className="w-6 h-6 rounded border border-slate-200 bg-transparent shrink-0 cursor-pointer"
+                      />
+                      <span className="font-mono text-slate-600 font-semibold uppercase">{fxEditState.fallbackValue || "#ef4444"}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3 bg-indigo-50/50 rounded-xl border border-indigo-150 space-y-2">
+                <span className="text-[9px] font-bold text-indigo-700 uppercase font-mono block">Sign-Based Smart Coloring</span>
+                <p className="text-[10px] text-indigo-600 leading-normal font-sans">
+                  Automatically paints cells or rows to positive and negative palette values depending on evaluated numeric sign:
+                </p>
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                  <div className="space-y-1">
+                    <span className="text-[9px] text-indigo-500 font-bold block uppercase tracking-wider">Positive Color</span>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="color"
+                        value={fxEditState.resultValue || "#10b981"}
+                        onChange={(e) => setFxEditState(prev => prev ? { ...prev, resultValue: e.target.value } : null)}
+                        className="w-6 h-6 rounded border border-indigo-200 bg-transparent shrink-0 cursor-pointer"
+                      />
+                      <span className="font-mono text-indigo-700 font-semibold uppercase">{fxEditState.resultValue || "#10b981"}</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <span className="text-[9px] text-indigo-500 font-bold block uppercase tracking-wider">Negative Color</span>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="color"
+                        value={fxEditState.fallbackValue || "#ef4444"}
+                        onChange={(e) => setFxEditState(prev => prev ? { ...prev, fallbackValue: e.target.value } : null)}
+                        className="w-6 h-6 rounded border border-indigo-200 bg-transparent shrink-0 cursor-pointer"
+                      />
+                      <span className="font-mono text-indigo-700 font-semibold uppercase">{fxEditState.fallbackValue || "#ef4444"}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Modal Footer Controls */}
+          <div className="px-5 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between shrink-0">
+            <button
+              onClick={() => removeFxConfig(activeFxProperty)}
+              className="px-3 py-1.5 border border-red-200 text-red-650 hover:bg-red-50 text-[10px] font-bold uppercase tracking-wider rounded-lg cursor-pointer transition-all"
+            >
+              Clear FX Binding
+            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setActiveFxProperty(null);
+                  setFxEditState(null);
+                }}
+                className="px-3 py-1.5 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 text-[10px] font-bold uppercase tracking-wider rounded-lg cursor-pointer transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveFxConfig}
+                disabled={!fxEditState.measureId}
+                className={`px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
+                  fxEditState.measureId
+                    ? "bg-black text-white hover:bg-slate-800"
+                    : "bg-slate-200 text-slate-400 cursor-not-allowed"
+                }`}
+              >
+                Apply FX Formula
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   const currentFiles = projectFilesMap[activeTemplate];
@@ -223,10 +970,51 @@ export default function App() {
       {/* 🚀 Brand Minimalism Navigation Header */}
       <header className="h-14 bg-white border-b border-slate-200/80 px-6 flex items-center justify-between shrink-0 z-10 shadow-[0_2px_18px_rgba(0,0,0,0.02)]">
         <div className="flex items-center gap-4">
-          {/* Custom Brand Logo - Microsoft Power BI gold representation */}
-          <div className="w-8 h-8 bg-gradient-to-tr from-[#e5b209] to-[#fcd93a] rounded-lg shadow-sm flex items-center justify-center text-black shrink-0 relative transition-all duration-300 hover:scale-105 hover:rotate-2">
-            <svg className="w-5 h-5 text-slate-900 fill-current" viewBox="0 0 24 24">
-              <path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z" />
+          {/* Custom Brand Logo - Glowing circular network sphere icon matching user-provided specifications */}
+          <div className="w-9 h-9 bg-gradient-to-br from-[#4f14a0] via-[#251368] to-[#110530] rounded-xl shadow-sm flex items-center justify-center shrink-0 relative transition-all duration-300 hover:scale-105 hover:rotate-2 border border-violet-500/20 group">
+            <svg className="w-7 h-7 text-white" viewBox="0 0 64 64" fill="none">
+              <defs>
+                <filter id="neon-glow" x="-20%" y="-20%" width="140%" height="140%">
+                  <feGaussianBlur stdDeviation="1.5" result="blur" />
+                  <feMerge>
+                    <feMergeNode in="blur" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
+                <linearGradient id="arc-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stopColor="#a78bfa" stopOpacity="0.8" />
+                  <stop offset="100%" stopColor="#818cf8" stopOpacity="0.8" />
+                </linearGradient>
+              </defs>
+              
+              {/* Connected arcs */}
+              <g stroke="url(#arc-grad)" strokeWidth="1.2">
+                {/* Diagonal lines */}
+                <path d="M 50 32 Q 32 32, 14 32" filter="url(#neon-glow)" />
+                <path d="M 32 14 Q 32 32, 32 50" filter="url(#neon-glow)" />
+                <path d="M 44.7 19.3 Q 32 32, 19.3 44.7" filter="url(#neon-glow)" />
+                <path d="M 19.3 19.3 Q 32 32, 44.7 44.7" filter="url(#neon-glow)" />
+                
+                {/* Curve arcs forming bounds */}
+                <path d="M 50 32 Q 44.7 44.7, 32 50" fill="none" opacity="0.6" />
+                <path d="M 32 50 Q 19.3 44.7, 14 32" fill="none" opacity="0.6" />
+                <path d="M 14 32 Q 19.3 19.3, 32 14" fill="none" opacity="0.6" />
+                <path d="M 32 14 Q 44.7 19.3, 50 32" fill="none" opacity="0.6" />
+
+                {/* Internal aesthetic cross-paths */}
+                <path d="M 50 32 Q 38.3 25.7, 19.3 19.3" fill="none" opacity="0.5" />
+                <path d="M 14 32 Q 25.7 38.3, 44.7 44.7" fill="none" opacity="0.5" />
+              </g>
+
+              {/* Glowing Nodes */}
+              <circle cx="50" cy="32" r="2.5" fill="#ffffff" filter="url(#neon-glow)" />
+              <circle cx="44.7" cy="44.7" r="2.5" fill="#ffffff" filter="url(#neon-glow)" />
+              <circle cx="32" cy="50" r="2.5" fill="#ffffff" filter="url(#neon-glow)" />
+              <circle cx="19.3" cy="44.7" r="2.5" fill="#ffffff" filter="url(#neon-glow)" />
+              <circle cx="14" cy="32" r="2.5" fill="#ffffff" filter="url(#neon-glow)" />
+              <circle cx="19.3" cy="19.3" r="2.5" fill="#ffffff" filter="url(#neon-glow)" />
+              <circle cx="32" cy="14" r="2.5" fill="#ffffff" filter="url(#neon-glow)" />
+              <circle cx="44.7" cy="19.3" r="2.5" fill="#ffffff" filter="url(#neon-glow)" />
             </svg>
           </div>
 
@@ -326,47 +1114,63 @@ export default function App() {
 
           {/* 2. Format settings vs Data wells mapping */}
           <div className="bg-white border border-gray-100 rounded-xl overflow-hidden flex flex-col flex-1 shadow-[0_4px_30px_rgba(0,0,0,0.01)]">
-            <div className="bg-gray-50/50 px-2 py-0.5 border-b border-gray-100 flex text-xs font-semibold">
+            <div className="bg-gray-50/50 px-2 py-0.5 border-b border-gray-100 flex text-xs font-semibold overflow-x-auto whitespace-nowrap scrollbar-none gap-0.5">
               <button
+                type="button"
                 onClick={() => setActiveTab("fields")}
-                className={`flex-1 text-center py-2.5 text-[10px] font-bold uppercase tracking-widest border-b-2 hover:text-black transition-all cursor-pointer ${
+                className={`px-2 py-2.5 text-[10px] font-extrabold uppercase tracking-wider border-b-2 hover:text-black transition-all cursor-pointer ${
                   activeTab === "fields"
                     ? "border-b-black text-gray-950 font-bold"
-                    : "border-b-transparent text-gray-405 text-gray-400 font-medium"
+                    : "border-b-transparent text-gray-500 font-medium opacity-80"
                 }`}
               >
-                Data Fields
+                Fields
               </button>
               <button
+                type="button"
                 onClick={() => setActiveTab("format")}
-                className={`flex-1 text-center py-2.5 text-[10px] font-bold uppercase tracking-widest border-b-2 hover:text-black transition-all cursor-pointer ${
+                className={`px-2 py-2.5 text-[10px] font-extrabold uppercase tracking-wider border-b-2 hover:text-black transition-all cursor-pointer ${
                   activeTab === "format"
                     ? "border-b-black text-gray-950 font-bold"
-                    : "border-b-transparent text-gray-405 text-gray-400 font-medium"
+                    : "border-b-transparent text-gray-500 font-medium opacity-80"
                 }`}
               >
-                Format Visual
+                Format
               </button>
               <button
+                type="button"
+                onClick={() => setActiveTab("rules")}
+                className={`px-2 py-2.5 text-[10px] font-extrabold uppercase tracking-wider border-b-2 hover:text-indigo-600 transition-all cursor-pointer flex items-center gap-1 ${
+                  activeTab === "rules"
+                    ? "border-b-indigo-600 text-indigo-700 font-bold"
+                    : "border-b-transparent text-gray-500 font-medium opacity-80"
+                }`}
+              >
+                <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+                <span>Conditional (fx)</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => setActiveTab("dax")}
-                className={`flex-1 text-center py-2.5 text-[10px] font-bold uppercase tracking-widest border-b-2 hover:text-black transition-all cursor-pointer ${
+                className={`px-2 py-2.5 text-[10px] font-extrabold uppercase tracking-wider border-b-2 hover:text-black transition-all cursor-pointer ${
                   activeTab === "dax"
                     ? "border-b-black text-gray-950 font-bold"
-                    : "border-b-transparent text-gray-405 text-gray-400 font-medium"
+                    : "border-b-transparent text-gray-500 font-medium opacity-80"
                 }`}
               >
-                DAX Measures
+                DAX
               </button>
               <button
+                type="button"
                 onClick={() => setActiveTab("copilot")}
-                className={`flex-1 text-center py-2.5 text-[10px] font-bold uppercase tracking-widest border-b-2 hover:text-black transition-all cursor-pointer flex justify-center items-center gap-1 ${
+                className={`px-2 py-2.5 text-[10px] font-extrabold uppercase tracking-wider border-b-2 hover:text-purple-600 transition-all cursor-pointer flex items-center gap-1 ${
                   activeTab === "copilot"
-                    ? "border-b-black text-gray-950 font-bold"
-                    : "border-b-transparent text-gray-405 text-gray-400 font-medium"
+                    ? "border-b-purple-600 text-purple-700 font-bold"
+                    : "border-b-transparent text-gray-500 font-medium opacity-80"
                 }`}
               >
-                <Sparkles size={11} className="text-gray-400 animate-pulse" />
-                <span>Copilot AI</span>
+                <Sparkles size={11} className="text-purple-500" />
+                <span>AI Copilot</span>
               </button>
             </div>
 
@@ -378,120 +1182,812 @@ export default function App() {
                   showSecondary={true}
                 />
               ) : activeTab === "format" ? (
-                <div className="space-y-4 text-xs font-sans">
-                  {/* Title Toggle options */}
-                  <div className="bg-white border border-gray-100 p-3.5 rounded-xl flex items-center justify-between">
-                    <div>
-                      <span className="font-semibold block text-gray-800">Show Reporting Title</span>
-                      <span className="text-[11px] text-gray-400">Append container card headers</span>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={currentSettings.showTitle}
-                        onChange={(e) => setSettingsMap(prev => ({
-                          ...prev,
-                          [activeTemplate]: { ...prev[activeTemplate], showTitle: e.target.checked }
-                        }))}
-                        className="sr-only peer"
-                      />
-                      <div className="w-9 h-5 bg-gray-100 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-200 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-black" />
-                    </label>
+                <PowerBIFormatPane
+                  currentSettings={currentSettings}
+                  activeTemplate={activeTemplate}
+                  setSettingsMap={setSettingsMap}
+                  openFxConfig={openFxConfig}
+                  formatSubTab={formatSubTab}
+                  setFormatSubTab={setFormatSubTab}
+                  formatSearchQuery={formatSearchQuery}
+                  setFormatSearchQuery={setFormatSearchQuery}
+                  expandedSections={expandedSections}
+                  setExpandedSections={setExpandedSections}
+                  setActiveTab={setActiveTab}
+                />
+              ) : activeTab === "rules" ? (
+                <div className="space-y-4 text-xs font-sans overflow-y-auto">
+                  {/* Pro Active Formatting Console Header Banner */}
+                  <div className="bg-indigo-50/70 border border-indigo-150 p-4 rounded-xl space-y-2">
+                    <span className="font-bold text-indigo-950 tracking-tight block text-[11px] font-sans flex items-center gap-1.5">
+                      <Sparkles size={12} className="text-indigo-600 animate-pulse" />
+                      <span>Dynamic Excel & Power BI Rule Engine</span>
+                    </span>
+                    <p className="text-[10.5px] text-indigo-800 leading-relaxed font-medium">
+                      Define heatmaps, KPI progress markers, or custom formula threshold rules. When exporting the customized report template, these visual configurations compile directly into standard Power BI theme styles.
+                    </p>
                   </div>
 
-                  {currentSettings.showTitle && (
-                    <div className="bg-white border border-gray-100 p-3.5 rounded-xl space-y-1.5">
-                      <label className="block text-[10px] uppercase font-bold text-gray-450 text-gray-400 mb-1 font-mono">Title Text Content</label>
-                      <input
-                        type="text"
-                        value={currentSettings.titleText}
-                        onChange={(e) => setSettingsMap(prev => ({
-                          ...prev,
-                          [activeTemplate]: { ...prev[activeTemplate], titleText: e.target.value }
-                        }))}
-                        className="w-full bg-gray-50 border border-gray-100 focus:border-black rounded-lg px-3 py-1.5 outline-none font-sans text-gray-800 font-medium text-xs transition-all"
-                      />
-                    </div>
-                  )}
-
-                  {/* Accenting color picker */}
-                  <div className="bg-white border border-slate-200 p-4 rounded-xl space-y-3 shadow-2xs">
+                  {/* Power BI Conditional Formatting Section */}
+                  <div className="bg-white border border-gray-100 p-4 rounded-xl space-y-3.5 shadow-2xs">
                     <div>
-                      <span className="font-bold tracking-tight font-display text-slate-800 text-[11px] block">Corporate Theme Presets</span>
-                      <span className="text-[10px] text-slate-400">Applies dynamic left-ribbon brand highlights to major categories</span>
+                      <span className="font-bold tracking-tight font-display text-slate-800 text-[11px] block">Conditional Formatting</span>
+                      <span className="text-[10px] text-slate-400">Apply rules to table rows and numeric columns</span>
                     </div>
-                    
-                    <div className="grid grid-cols-6 gap-2">
-                      {[
-                        { hex: "#0f172a", name: "Midnight" },
-                        { hex: "#059669", name: "Vanguard" },
-                        { hex: "#e5b209", name: "Active Gold" },
-                        { hex: "#f59e0b", name: "Bloomberg" },
-                        { hex: "#6366f1", name: "Modern Purple" },
-                        { hex: "#1d4ed8", name: "Royal Cobalt" }
-                      ].map((themeObj, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => setSettingsMap(prev => ({
+
+                    {/* Row Formatting Toggles */}
+                    <div className="space-y-2 border-t border-slate-100 pt-2.5">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono block">Row-Level Rules</span>
+                      
+                      <div className="flex items-center justify-between py-1">
+                        <div>
+                          <span className="font-medium text-slate-700 block text-[11px]">Row Variance highlight</span>
+                          <span className="text-[9.5px] text-slate-400 font-sans block leading-tight">Green / Red highlights based on Variance</span>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={currentSettings.enableRowVarianceFormatting || false}
+                          onChange={(e) => setSettingsMap(prev => ({
                             ...prev,
-                            [activeTemplate]: { ...prev[activeTemplate], accentColor: themeObj.hex }
+                            [activeTemplate]: { ...prev[activeTemplate], enableRowVarianceFormatting: e.target.checked }
                           }))}
-                          className={`h-8 rounded-lg border relative transition-all duration-300 hover:scale-105 hover:shadow-xs cursor-pointer ${
-                            currentSettings.accentColor === themeObj.hex 
-                              ? "ring-2 ring-slate-800 ring-offset-1 scale-105 border-white" 
-                              : "border-slate-200/60 opacity-85 hover:opacity-100"
-                          }`}
-                          style={{ backgroundColor: themeObj.hex }}
-                          title={`${themeObj.name} (${themeObj.hex})`}
+                          className="rounded border-slate-300 text-slate-900 focus:ring-slate-900 h-4 w-4 cursor-pointer"
                         />
-                      ))}
+                      </div>
+
+                      <div className="flex items-center justify-between py-1">
+                        <div>
+                          <span className="font-medium text-slate-700 block text-[11px]">Row Heatmap gradient</span>
+                          <span className="text-[9.5px] text-slate-400 font-sans block leading-tight">Shade background based on actual value size</span>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={currentSettings.enableRowHeatmap || false}
+                          onChange={(e) => setSettingsMap(prev => ({
+                            ...prev,
+                            [activeTemplate]: { ...prev[activeTemplate], enableRowHeatmap: e.target.checked }
+                          }))}
+                          className="rounded border-slate-300 text-slate-900 focus:ring-slate-900 h-4 w-4 cursor-pointer"
+                        />
+                      </div>
                     </div>
 
-                    <div className="flex items-center justify-between text-[10px] pt-1.5 text-slate-400 border-t border-slate-100">
-                      <span className="font-medium">Active Board Accent</span>
-                      <span className="font-mono bg-slate-50 border border-slate-200 text-slate-600 px-2 py-0.5 rounded-md font-bold text-[9px] uppercase tracking-wider">{currentSettings.accentColor}</span>
-                    </div>
-                  </div>
+                    {/* Column Formatting Options */}
+                    <div className="space-y-2 border-t border-slate-100 pt-2.5">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono block">Column-Level Rules</span>
 
-                  {/* Tooltips settings */}
-                  <div className="bg-white border border-gray-100 p-3.5 rounded-xl flex items-center justify-between">
-                    <div>
-                      <span className="font-semibold block text-gray-800">Tooltips Mapping</span>
-                      <span className="text-[11px] text-gray-400">Enable hover tooltip overlay</span>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={currentSettings.showTooltip}
-                        onChange={(e) => setSettingsMap(prev => ({
-                          ...prev,
-                          [activeTemplate]: { ...prev[activeTemplate], showTooltip: e.target.checked }
-                        }))}
-                        className="sr-only peer"
-                      />
-                      <div className="w-9 h-5 bg-gray-100 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-200 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-black" />
-                    </label>
-                  </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 font-medium block">Target Column</label>
+                        <select
+                          value={currentSettings.columnFormattingTarget || "none"}
+                          onChange={(e) => setSettingsMap(prev => ({
+                            ...prev,
+                            [activeTemplate]: { ...prev[activeTemplate], columnFormattingTarget: e.target.value as any }
+                          }))}
+                          className="w-full bg-slate-50 border border-slate-150 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-slate-850 outline-none"
+                        >
+                          <option value="none">None (Disabled)</option>
+                          <option value="actual">Actual</option>
+                          <option value="budget">Budget</option>
+                          <option value="variance">Variance ($)</option>
+                          <option value="variancePct">Variance (%)</option>
+                        </select>
+                      </div>
 
-                  {/* Auto-Hide Empty Leaf Expand Option */}
-                  <div className="bg-white border border-gray-100 p-3.5 rounded-xl flex items-center justify-between">
-                    <div>
-                      <span className="font-semibold block text-gray-800">Auto-Hide Leaf Expand</span>
-                      <span className="text-[11px] text-gray-400">Hide bullet/placeholder if no children</span>
+                      {currentSettings.columnFormattingTarget && currentSettings.columnFormattingTarget !== "none" && (
+                        <div className="space-y-1 animate-fade-in">
+                          <label className="text-[10px] text-slate-400 font-medium block">Formatting Style</label>
+                          <select
+                            value={currentSettings.columnFormattingType || "none"}
+                            onChange={(e) => setSettingsMap(prev => ({
+                              ...prev,
+                              [activeTemplate]: { ...prev[activeTemplate], columnFormattingType: e.target.value as any }
+                            }))}
+                            className="w-full bg-slate-50 border border-slate-150 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-slate-850 outline-none"
+                          >
+                            <option value="none">Choose action...</option>
+                            <option value="heatmap">Cell Heatmap Background Gradient</option>
+                            <option value="databars">Data Bars (Proportion Charts)</option>
+                            <option value="icons">KPI Status Icons (Indicators)</option>
+                          </select>
+                        </div>
+                      )}
                     </div>
-                    <label className="relative inline-flex items-center cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={currentSettings.hideEmptyExpand}
-                        onChange={(e) => setSettingsMap(prev => ({
-                          ...prev,
-                          [activeTemplate]: { ...prev[activeTemplate], hideEmptyExpand: e.target.checked }
-                        }))}
-                        className="sr-only peer"
-                      />
-                      <div className="w-9 h-5 bg-gray-100 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-200 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-black" />
-                    </label>
+
+                    {/* DAX Measures Conditional Formatting Block */}
+                    <div className="space-y-3 border-t border-slate-100 pt-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-[10px] font-bold text-slate-800 uppercase tracking-wider font-mono block">DAX-Driven Conditional Styles</span>
+                          <span className="text-[9.5px] text-slate-400 font-sans block leading-tight">Format layout styling using calculated DAX measure bounds</span>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={currentSettings.enableDaxCondFormatting || false}
+                          onChange={(e) => setSettingsMap(prev => ({
+                            ...prev,
+                            [activeTemplate]: { ...prev[activeTemplate], enableDaxCondFormatting: e.target.checked }
+                          }))}
+                          className="rounded border-slate-300 text-slate-900 focus:ring-slate-900 h-4 w-4 cursor-pointer"
+                        />
+                      </div>
+
+                      {currentSettings.enableDaxCondFormatting && (
+                        <div className="space-y-3 pl-2 border-l-2 border-indigo-400 pt-1 animate-fade-in text-[11px]">
+                          {/* Format Style Mode Selector */}
+                          <div className="space-y-1">
+                            <label className="text-[9.5px] text-indigo-600 font-bold block uppercase tracking-wider">Format Style</label>
+                            <select
+                              value={currentSettings.daxCondFormatMode || "rules"}
+                              onChange={(e) => setSettingsMap(prev => ({
+                                ...prev,
+                                [activeTemplate]: { ...prev[activeTemplate], daxCondFormatMode: e.target.value as any }
+                              }))}
+                              className="w-full bg-indigo-50 border border-indigo-200 rounded-md px-2 py-1 text-[11px] font-bold text-indigo-900 outline-none"
+                            >
+                              <option value="rules">Rules (Value comparisons)</option>
+                              <option value="fieldValue">Field Value (Dynamic measure returns hex color)</option>
+                            </select>
+                          </div>
+
+                          {/* 1. Select DAX measure */}
+                          <div className="space-y-1">
+                            <label className="text-[9.5px] text-slate-400 font-medium block">
+                              {currentSettings.daxCondFormatMode === "fieldValue" ? "Measure returning Hex Color / format string" : "Based on DAX Measure"}
+                            </label>
+                            <select
+                              value={currentSettings.daxCondMeasureId || ""}
+                              onChange={(e) => setSettingsMap(prev => ({
+                                ...prev,
+                                [activeTemplate]: { ...prev[activeTemplate], daxCondMeasureId: e.target.value }
+                              }))}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-[11px] font-semibold text-slate-800 outline-none"
+                            >
+                              <option value="">-- Select a DAX Measure --</option>
+                              {(currentSettings.daxMeasures || []).map((m) => (
+                                <option key={m.id} value={m.id}>{m.name} ({m.formula})</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* 2. Format Target */}
+                          <div className="space-y-1">
+                            <label className="text-[9.5px] text-slate-400 font-medium block">Apply formatting to</label>
+                            <select
+                              value={currentSettings.daxCondTarget || "all"}
+                              onChange={(e) => setSettingsMap(prev => ({
+                                ...prev,
+                                [activeTemplate]: { ...prev[activeTemplate], daxCondTarget: e.target.value as any }
+                              }))}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-[11px] font-semibold text-slate-800 outline-none"
+                            >
+                              <option value="all">Whole Row (Columns & Headers)</option>
+                              <option value="rows">Hierarchy Header Label Row Only</option>
+                              <option value="columns">Numeric Metric Columns Only</option>
+                            </select>
+                          </div>
+
+                          {currentSettings.daxCondFormatMode === "fieldValue" ? (
+                            /* Field Value specific sub-targets (apply to Bg, Font or Both) */
+                            <div className="space-y-1 p-2 bg-indigo-50/50 border border-indigo-100 rounded-md">
+                              <label className="text-[9.5px] text-indigo-700 font-bold block">Apply color as</label>
+                              <select
+                                value={currentSettings.daxCondFieldValueTarget || "background"}
+                                onChange={(e) => setSettingsMap(prev => ({
+                                  ...prev,
+                                  [activeTemplate]: { ...prev[activeTemplate], daxCondFieldValueTarget: e.target.value as any }
+                                }))}
+                                className="w-full bg-white border border-slate-200 rounded px-2 py-1 text-[11px] text-slate-800 font-semibold outline-none"
+                              >
+                                <option value="background">Background Fill (Hex color)</option>
+                                <option value="font">Text / Font Color (Hex color)</option>
+                                <option value="both">Both Fill and Font Color</option>
+                              </select>
+                              <p className="text-[8.5px] text-slate-500 mt-1 leading-snug">
+                                Ensure your DAX measure evaluates to a hex code like <code className="font-bold text-indigo-600 font-mono">"#FF0000"</code> or a CSS color name so the visual can apply it dynamically.
+                              </p>
+                            </div>
+                          ) : (
+                            /* Rules Mode inputs: Conditions & Colors */
+                            <>
+                              {/* 3. Condition Operator */}
+                              <div className="space-y-1">
+                                <label className="text-[9.5px] text-slate-400 font-medium block">Condition Operator</label>
+                                <select
+                                  value={currentSettings.daxCondCondition || "greater"}
+                                  onChange={(e) => setSettingsMap(prev => ({
+                                    ...prev,
+                                    [activeTemplate]: { ...prev[activeTemplate], daxCondCondition: e.target.value as any }
+                                  }))}
+                                  className="w-full bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-[11px] font-semibold text-slate-800 outline-none"
+                                >
+                                  <option value="greater">Is greater than (&gt; val)</option>
+                                  <option value="less">Is less than (&lt; val)</option>
+                                  <option value="between">Is strictly between (min, max)</option>
+                                </select>
+                              </div>
+
+                              {/* 4. Values */}
+                              <div className="grid grid-cols-2 gap-2">
+                                <div className="space-y-1">
+                                  <span className="text-[9.5px] text-slate-400 font-medium block">
+                                    {currentSettings.daxCondCondition === "between" ? "Min Bounds" : "Threshold Limit"}
+                                  </span>
+                                  <input
+                                    type="number"
+                                    value={currentSettings.daxCondValue1 ?? 100000}
+                                    onChange={(e) => setSettingsMap(prev => ({
+                                      ...prev,
+                                      [activeTemplate]: { ...prev[activeTemplate], daxCondValue1: parseFloat(e.target.value) || 0 }
+                                    }))}
+                                    className="w-full bg-white border border-slate-200 rounded px-2 py-0.5 text-[11px] text-slate-800 font-bold"
+                                  />
+                                </div>
+
+                                {currentSettings.daxCondCondition === "between" && (
+                                  <div className="space-y-1">
+                                    <span className="text-[9.5px] text-slate-400 font-medium block">Max Bounds</span>
+                                    <input
+                                      type="number"
+                                      value={currentSettings.daxCondValue2 ?? 1000000}
+                                      onChange={(e) => setSettingsMap(prev => ({
+                                        ...prev,
+                                        [activeTemplate]: { ...prev[activeTemplate], daxCondValue2: parseFloat(e.target.value) || 0 }
+                                      }))}
+                                      className="w-full bg-white border border-slate-200 rounded px-2 py-0.5 text-[11px] text-slate-800 font-bold"
+                                    />
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* 5. Custom Colors */}
+                              <div className="grid grid-cols-2 gap-2 p-2 bg-slate-50 border border-slate-100 rounded-lg">
+                                <div className="space-y-1">
+                                  <span className="text-[9px] font-bold text-slate-500 uppercase block">Font Color</span>
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      type="color"
+                                      value={currentSettings.daxCondTextColor || "#15803d"}
+                                      onChange={(e) => setSettingsMap(prev => ({
+                                        ...prev,
+                                        [activeTemplate]: { ...prev[activeTemplate], daxCondTextColor: e.target.value }
+                                      }))}
+                                      className="w-4 h-4 cursor-pointer rounded border border-slate-200 bg-transparent"
+                                    />
+                                    <span className="text-[9px] font-mono font-medium text-slate-600 uppercase">{currentSettings.daxCondTextColor || "#15803d"}</span>
+                                  </div>
+                                </div>
+
+                                <div className="space-y-1">
+                                  <span className="text-[9px] font-bold text-slate-500 uppercase block">Highlight BG</span>
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      type="color"
+                                      value={currentSettings.daxCondBgColor || "#f0fdf4"}
+                                      onChange={(e) => setSettingsMap(prev => ({
+                                        ...prev,
+                                        [activeTemplate]: { ...prev[activeTemplate], daxCondBgColor: e.target.value }
+                                      }))}
+                                      className="w-4 h-4 cursor-pointer rounded border border-slate-200 bg-transparent"
+                                    />
+                                    <span className="text-[9px] font-mono font-medium text-slate-600 uppercase">{currentSettings.daxCondBgColor || "#f0fdf4"}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Advanced Conditional Formatting Multi-Engine Suite */}
+                    <div className="space-y-4 border-t border-slate-100 pt-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-[11px] font-extrabold text-slate-800 uppercase tracking-wider font-sans block flex items-center gap-1">
+                            <Sparkles size={11} className="text-indigo-600 animate-pulse" />
+                            <span>Formatting Engine Suite</span>
+                          </span>
+                          <span className="text-[9.5px] text-slate-400 font-sans block leading-tight">Combine Rules, Text, Expressions, and DAX Measures</span>
+                        </div>
+                        <button
+                          onClick={handleAddCFRule}
+                          className="flex items-center gap-1 bg-indigo-600 text-white hover:bg-indigo-700 px-2.5 py-1 rounded-md text-[10px] font-bold transition-all select-none cursor-pointer shadow-sm"
+                        >
+                          <Plus size={11} className="stroke-[3]" /> Add Rule
+                        </button>
+                      </div>
+
+                      <div className="space-y-3.5 max-h-[450px] overflow-y-auto pr-1">
+                        {(!currentSettings.cfRules || currentSettings.cfRules.length === 0) ? (
+                          <div className="text-center py-5 bg-slate-50/50 border border-dashed border-slate-205 rounded-xl p-3">
+                            <span className="text-[10.5px] text-slate-400 font-medium font-sans">No advanced formatting engines configured yet.</span>
+                          </div>
+                        ) : (
+                          (currentSettings.cfRules || []).map((rule: any, rIdx: number) => {
+                            const isExpanded = rule._uiExpanded !== false;
+                            return (
+                              <div key={rule.id} className={`bg-white border rounded-xl shadow-xs transition-all ${rule.isEnabled ? 'border-slate-200/90' : 'border-slate-200/40 opacity-70'}`}>
+                                {/* Card Header */}
+                                <div className="flex items-center justify-between bg-slate-50/60 px-3 py-2 border-b border-slate-100 rounded-t-xl gap-2">
+                                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                    <input
+                                      type="checkbox"
+                                      checked={rule.isEnabled !== false}
+                                      onChange={(e) => handleUpdateCFRule(rule.id, { isEnabled: e.target.checked })}
+                                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-3 w-3 cursor-pointer"
+                                    />
+                                    <input
+                                      type="text"
+                                      value={rule.name || ""}
+                                      onChange={(e) => handleUpdateCFRule(rule.id, { name: e.target.value })}
+                                      className="bg-transparent border-0 font-bold text-[10.5px] text-slate-700 focus:ring-0 p-0 hover:bg-slate-200/40 focus:bg-white rounded px-1 transition-colors w-full outline-none"
+                                      placeholder="Rule Name"
+                                    />
+                                  </div>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUpdateCFRule(rule.id, { _uiExpanded: !isExpanded })}
+                                      className="text-slate-400 hover:text-slate-600 p-0.5 rounded text-[10px] font-mono"
+                                      title={isExpanded ? "Collapse" : "Expand"}
+                                    >
+                                      {isExpanded ? "▲" : "▼"}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteCFRule(rule.id)}
+                                      className="text-slate-400 hover:text-red-600 p-0.5 rounded transition-colors"
+                                      title="Delete"
+                                    >
+                                      <Trash2 size={11} />
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {isExpanded && (
+                                  <div className="p-3 space-y-3 text-[10.5px]">
+                                    {/* 1. Engine & Priority Selection */}
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <div className="space-y-1">
+                                        <label className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">Format Engine</label>
+                                        <select
+                                          value={rule.engine}
+                                          onChange={(e) => handleUpdateCFRule(rule.id, { engine: e.target.value })}
+                                          className="w-full bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px] font-semibold text-slate-850 outline-none"
+                                        >
+                                          <option value="rule">Rule-Based Engine</option>
+                                          <option value="text">Text/String Engine</option>
+                                          <option value="expression">Expression Engine</option>
+                                          <option value="measure">Measure Engine</option>
+                                        </select>
+                                      </div>
+
+                                      <div className="space-y-1">
+                                        <label className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">Priority Rank</label>
+                                        <input
+                                          type="number"
+                                          value={rule.priority ?? 5}
+                                          onChange={(e) => handleUpdateCFRule(rule.id, { priority: parseInt(e.target.value) || 5 })}
+                                          className="w-full bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-[10px] font-bold text-slate-850 outline-none text-center"
+                                          placeholder="1-10 (lower runs first)"
+                                        />
+                                      </div>
+                                    </div>
+
+                                    {/* 2. Target Settings */}
+                                    <div className="grid grid-cols-2 gap-2 p-2 bg-slate-50/50 border border-slate-100 rounded-lg">
+                                      <div className="space-y-1">
+                                        <label className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">Target Scope</label>
+                                        <select
+                                          value={rule.targetType}
+                                          onChange={(e) => handleUpdateCFRule(rule.id, { targetType: e.target.value })}
+                                          className="w-full bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[9.5px] text-slate-800 outline-none font-medium"
+                                        >
+                                          <option value="cell">Entire Cell</option>
+                                          <option value="row">Entire Row</option>
+                                          <option value="column">Entire Column</option>
+                                          <option value="hierarchy">Hierarchy Node</option>
+                                          <option value="subtotal">Subtotal Row/Col</option>
+                                          <option value="grandtotal">Grand Total Row/Col</option>
+                                        </select>
+                                      </div>
+
+                                      <div className="space-y-1">
+                                        <label className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">Scope Metric</label>
+                                        <select
+                                          value={rule.targetColumn || "All"}
+                                          onChange={(e) => handleUpdateCFRule(rule.id, { targetColumn: e.target.value })}
+                                          className="w-full bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[9.5px] text-slate-800 outline-none font-medium"
+                                        >
+                                          <option value="All">All Columns</option>
+                                          <option value="actual">Actual</option>
+                                          <option value="budget">Budget</option>
+                                          <option value="variance">Variance</option>
+                                          <option value="variancePct">Variance %</option>
+                                        </select>
+                                      </div>
+                                    </div>
+
+                                    {/* 3. Engine Parameters Section */}
+                                    <div className="space-y-2 border-t border-slate-100 pt-2.5">
+                                      <span className="text-[9px] font-extrabold text-indigo-600 uppercase tracking-wider block">Engine Conditions</span>
+                                      
+                                      {rule.engine === "rule" && (
+                                        <div className="space-y-2 animate-fade-in">
+                                          <div className="grid grid-cols-2 gap-2">
+                                            <div className="space-y-1">
+                                              <span className="text-[8.5px] text-slate-400 block font-bold uppercase">Field</span>
+                                              <select
+                                                value={rule.ruleField || "actual"}
+                                                onChange={(e) => handleUpdateCFRule(rule.id, { ruleField: e.target.value })}
+                                                className="w-full bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[10px] text-slate-850 outline-none"
+                                              >
+                                                <option value="actual">Actual</option>
+                                                <option value="budget">Budget</option>
+                                                <option value="variance">Variance</option>
+                                                <option value="variancePct">Variance %</option>
+                                              </select>
+                                            </div>
+                                            <div className="space-y-1">
+                                              <span className="text-[8.5px] text-slate-400 block font-bold uppercase">Operator</span>
+                                              <select
+                                                value={rule.ruleOperator || "greater"}
+                                                onChange={(e) => handleUpdateCFRule(rule.id, { ruleOperator: e.target.value })}
+                                                className="w-full bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[10px] text-slate-850 outline-none"
+                                              >
+                                                <option value="greater">Greater Than (&gt;)</option>
+                                                <option value="less">Less Than (&lt;)</option>
+                                                <option value="greaterOrEqual">Greater/Equal (&gt;=)</option>
+                                                <option value="lessOrEqual">Less/Equal (&lt;=)</option>
+                                                <option value="equal">Equal To (=)</option>
+                                                <option value="notEqual">Not Equal To (!=)</option>
+                                                <option value="between">Is Between</option>
+                                              </select>
+                                            </div>
+                                          </div>
+                                          <div className="grid grid-cols-2 gap-2">
+                                            <div className="space-y-1">
+                                              <span className="text-[8.5px] text-slate-400 block font-bold uppercase">
+                                                {rule.ruleOperator === "between" ? "Min Value" : "Value"}
+                                              </span>
+                                              <input
+                                                type="text"
+                                                value={rule.ruleValue1 ?? ""}
+                                                onChange={(e) => handleUpdateCFRule(rule.id, { ruleValue1: e.target.value })}
+                                                className="w-full bg-white border border-slate-200 rounded px-2 py-0.5 text-[10px] text-slate-800 font-semibold"
+                                                placeholder="e.g. 100000"
+                                              />
+                                            </div>
+                                            {rule.ruleOperator === "between" && (
+                                              <div className="space-y-1">
+                                                <span className="text-[8.5px] text-slate-400 block font-bold uppercase">Max Value</span>
+                                                <input
+                                                  type="text"
+                                                  value={rule.ruleValue2 ?? ""}
+                                                  onChange={(e) => handleUpdateCFRule(rule.id, { ruleValue2: e.target.value })}
+                                                  className="w-full bg-white border border-slate-200 rounded px-2 py-0.5 text-[10px] text-slate-800 font-semibold"
+                                                  placeholder="e.g. 500000"
+                                                />
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {rule.engine === "text" && (
+                                        <div className="space-y-2 animate-fade-in">
+                                          <div className="grid grid-cols-2 gap-2">
+                                            <div className="space-y-1">
+                                              <span className="text-[8.5px] text-slate-400 block font-bold uppercase">Text Field</span>
+                                              <select
+                                                value={rule.textField || "name"}
+                                                onChange={(e) => handleUpdateCFRule(rule.id, { textField: e.target.value })}
+                                                className="w-full bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[10px] text-slate-850 outline-none"
+                                              >
+                                                <option value="name">Row Name</option>
+                                              </select>
+                                            </div>
+                                            <div className="space-y-1">
+                                              <span className="text-[8.5px] text-slate-400 block font-bold uppercase">Operator</span>
+                                              <select
+                                                value={rule.textOperator || "startsWith"}
+                                                onChange={(e) => handleUpdateCFRule(rule.id, { textOperator: e.target.value })}
+                                                className="w-full bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[10px] text-slate-850 outline-none"
+                                              >
+                                                <option value="startsWith">Starts With</option>
+                                                <option value="endsWith">Ends With</option>
+                                                <option value="contains">Contains</option>
+                                                <option value="equals">Equals Exactly</option>
+                                                <option value="notEquals">Does Not Equal</option>
+                                                <option value="isEmpty">Is Empty</option>
+                                                <option value="isNotEmpty">Is Not Empty</option>
+                                              </select>
+                                            </div>
+                                          </div>
+                                          {!["isEmpty", "isNotEmpty"].includes(rule.textOperator || "") && (
+                                            <div className="space-y-1">
+                                              <span className="text-[8.5px] text-slate-400 block font-bold uppercase">Match Value</span>
+                                              <input
+                                                type="text"
+                                                value={rule.textValue || ""}
+                                                onChange={(e) => handleUpdateCFRule(rule.id, { textValue: e.target.value })}
+                                                className="w-full bg-white border border-slate-200 rounded px-2 py-0.5 text-[10px] text-slate-800 font-semibold"
+                                                placeholder="e.g. Sales"
+                                              />
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+
+                                      {rule.engine === "expression" && (
+                                        <div className="space-y-2 animate-fade-in">
+                                          <div className="space-y-1">
+                                            <div className="flex justify-between items-center">
+                                              <span className="text-[8.5px] text-slate-400 block font-bold uppercase">Formula Expression</span>
+                                              <span className="text-[8px] text-indigo-600 font-semibold">Excel/DAX compatible syntax</span>
+                                            </div>
+                                            <textarea
+                                              value={rule.expressionString || ""}
+                                              onChange={(e) => handleUpdateCFRule(rule.id, { expressionString: e.target.value })}
+                                              className="w-full bg-slate-50 border border-slate-200 rounded p-1.5 text-[10px] font-mono text-slate-800 outline-none h-14 resize-none"
+                                              placeholder="e.g. Actual > 100000 AND Name contains 'Revenue'"
+                                            />
+                                          </div>
+                                          
+                                          {/* Clickable help chips */}
+                                          <div className="space-y-1">
+                                            <span className="text-[8px] font-bold text-slate-400 block uppercase">Formula Helper Macros</span>
+                                            <div className="flex flex-wrap gap-1">
+                                              {["Actual", "Budget", "Variance", "VariancePct", "Profit", "Revenue", "AND", "OR", "NOT", "ISBLANK"].map((macro) => (
+                                                <button
+                                                  key={macro}
+                                                  type="button"
+                                                  onClick={() => {
+                                                    const currentExpr = rule.expressionString || "";
+                                                    const space = currentExpr && !currentExpr.endsWith(" ") ? " " : "";
+                                                    handleUpdateCFRule(rule.id, { expressionString: `${currentExpr}${space}${macro}` });
+                                                  }}
+                                                  className="bg-slate-100 hover:bg-slate-200 text-slate-600 text-[8.5px] px-1.5 py-0.5 rounded font-mono font-bold transition-all shrink-0 cursor-pointer"
+                                                >
+                                                  +{macro}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {rule.engine === "measure" && (
+                                        <div className="space-y-2 animate-fade-in">
+                                          <div className="space-y-1">
+                                            <span className="text-[8.5px] text-slate-400 block font-bold uppercase">Select Calculated Measure</span>
+                                            <select
+                                              value={rule.measureId || ""}
+                                              onChange={(e) => handleUpdateCFRule(rule.id, { measureId: e.target.value })}
+                                              className="w-full bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[10px] text-slate-850 outline-none"
+                                            >
+                                              <option value="">-- Choose Measure --</option>
+                                              {(currentSettings.daxMeasures || []).map((m: any) => (
+                                                <option key={m.id} value={m.id}>{m.name}</option>
+                                              ))}
+                                            </select>
+                                          </div>
+                                          <div className="space-y-1">
+                                            <span className="text-[8.5px] text-slate-400 block font-bold uppercase">Apply Output To Style Property</span>
+                                            <select
+                                              value={rule.measureTargetProperty || "background"}
+                                              onChange={(e) => handleUpdateCFRule(rule.id, { measureTargetProperty: e.target.value })}
+                                              className="w-full bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[10px] text-slate-850 outline-none"
+                                            >
+                                              <option value="background">Background Fill (evaluates measure return value as Hex color)</option>
+                                              <option value="foreground">Font/Text Color (evaluates measure return value as Hex color)</option>
+                                              <option value="icon">KPI Icon (evaluates measure return value as status name)</option>
+                                              <option value="borderColor">Border Line Color (evaluates measure return value as Hex color)</option>
+                                              <option value="allStyles">All Styles (evaluates measure return value directly)</option>
+                                            </select>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    {/* 4. Formatting Output Styles Section */}
+                                    <div className="space-y-2.5 border-t border-slate-100 pt-2.5 bg-slate-50/30 p-2 rounded-lg">
+                                      <span className="text-[9px] font-extrabold text-indigo-600 uppercase tracking-wider block">Resulting Cell Style</span>
+                                      
+                                      {/* Background & Text Colors */}
+                                      <div className="grid grid-cols-2 gap-2">
+                                        <div className="space-y-1">
+                                          <span className="text-[8px] font-bold text-slate-400 uppercase block">Background</span>
+                                          <div className="flex items-center gap-1 bg-white border border-slate-200 rounded p-1">
+                                            <input
+                                              type="color"
+                                              value={rule.style?.background || "#ffffff"}
+                                              onChange={(e) => handleUpdateCFRule(rule.id, {
+                                                style: { ...(rule.style || {}), background: e.target.value }
+                                              })}
+                                              className="w-4 h-4 cursor-pointer border-0 bg-transparent rounded"
+                                            />
+                                            <span className="text-[8.5px] font-mono font-medium uppercase text-slate-500">{rule.style?.background || "#ffffff"}</span>
+                                          </div>
+                                        </div>
+
+                                        <div className="space-y-1">
+                                          <span className="text-[8px] font-bold text-slate-400 uppercase block">Text Color</span>
+                                          <div className="flex items-center gap-1 bg-white border border-slate-200 rounded p-1">
+                                            <input
+                                              type="color"
+                                              value={rule.style?.foreground || "#111827"}
+                                              onChange={(e) => handleUpdateCFRule(rule.id, {
+                                                style: { ...(rule.style || {}), foreground: e.target.value }
+                                              })}
+                                              className="w-4 h-4 cursor-pointer border-0 bg-transparent rounded"
+                                            />
+                                            <span className="text-[8.5px] font-mono font-medium uppercase text-slate-500">{rule.style?.foreground || "#111827"}</span>
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* Borders & Custom SVG/KPI icon */}
+                                      <div className="grid grid-cols-2 gap-2">
+                                        <div className="space-y-1">
+                                          <span className="text-[8px] font-bold text-slate-400 uppercase block">Border Color</span>
+                                          <div className="flex items-center gap-1 bg-white border border-slate-200 rounded p-1">
+                                            <input
+                                              type="color"
+                                              value={rule.style?.borderColor || "#ffffff"}
+                                              onChange={(e) => handleUpdateCFRule(rule.id, {
+                                                style: { ...(rule.style || {}), borderColor: e.target.value }
+                                              })}
+                                              className="w-4 h-4 cursor-pointer border-0 bg-transparent rounded"
+                                            />
+                                            <span className="text-[8.5px] font-mono font-medium uppercase text-slate-500">{rule.style?.borderColor || "#ffffff"}</span>
+                                          </div>
+                                        </div>
+
+                                        <div className="space-y-1">
+                                          <span className="text-[8px] font-bold text-slate-400 uppercase block font-sans">KPI Icon</span>
+                                          <select
+                                            value={rule.style?.icon || ""}
+                                            onChange={(e) => handleUpdateCFRule(rule.id, {
+                                              style: { ...(rule.style || {}), icon: e.target.value }
+                                            })}
+                                            className="w-full bg-white border border-slate-200 rounded px-1.5 py-1 text-[9.5px] font-semibold text-slate-800 outline-none"
+                                          >
+                                            <option value="">No Icon</option>
+                                            <option value="check">Checkmark (Success)</option>
+                                            <option value="warning">Warning Symbol</option>
+                                            <option value="error">Error Indicator</option>
+                                            <option value="arrow-up">Arrow Up (▲)</option>
+                                            <option value="arrow-down">Arrow Down (▼)</option>
+                                            <option value="neutral-dash">Neutral Dash (▬)</option>
+                                            <option value="star">Star Rating</option>
+                                            <option value="flag">Alert Flag</option>
+                                          </select>
+                                        </div>
+                                      </div>
+
+                                      {/* Typography Styles and emphasis buttons */}
+                                      <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleUpdateCFRule(rule.id, {
+                                            style: { ...(rule.style || {}), fontWeight: rule.style?.fontWeight === "bold" ? "normal" : "bold" }
+                                          })}
+                                          className={`px-2 py-0.5 rounded text-[9.5px] font-bold border transition-all ${
+                                            rule.style?.fontWeight === "bold"
+                                              ? "bg-slate-900 border-slate-900 text-white"
+                                              : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                                          }`}
+                                        >
+                                          Bold
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleUpdateCFRule(rule.id, {
+                                            style: { ...(rule.style || {}), fontStyle: rule.style?.fontStyle === "italic" ? "normal" : "italic" }
+                                          })}
+                                          className={`px-2 py-0.5 rounded text-[9.5px] italic border transition-all ${
+                                            rule.style?.fontStyle === "italic"
+                                              ? "bg-slate-900 border-slate-900 text-white font-bold"
+                                              : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                                          }`}
+                                        >
+                                          Italic
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleUpdateCFRule(rule.id, {
+                                            style: { ...(rule.style || {}), textDecoration: rule.style?.textDecoration === "underline" ? "none" : "underline" }
+                                          })}
+                                          className={`px-2 py-0.5 rounded text-[9.5px] underline border transition-all ${
+                                            rule.style?.textDecoration === "underline"
+                                              ? "bg-slate-900 border-slate-900 text-white font-bold"
+                                              : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                                          }`}
+                                        >
+                                          Underline
+                                        </button>
+                                      </div>
+
+                                      {/* Rich details: Animation & Tooltips */}
+                                      <div className="grid grid-cols-2 gap-2 border-t border-slate-100 pt-1.5">
+                                        <div className="space-y-1">
+                                          <span className="text-[8px] font-bold text-slate-400 uppercase block font-sans">CSS Animation</span>
+                                          <select
+                                            value={rule.style?.animation || ""}
+                                            onChange={(e) => handleUpdateCFRule(rule.id, {
+                                              style: { ...(rule.style || {}), animation: e.target.value }
+                                            })}
+                                            className="w-full bg-white border border-slate-200 rounded px-1 py-0.5 text-[9.5px] text-slate-800 outline-none"
+                                          >
+                                            <option value="">None</option>
+                                            <option value="pulse">Pulse effect</option>
+                                            <option value="bounce">Bounce alert</option>
+                                          </select>
+                                        </div>
+
+                                        <div className="space-y-1">
+                                          <span className="text-[8px] font-bold text-slate-400 uppercase block font-sans">Custom Tooltip</span>
+                                          <input
+                                            type="text"
+                                            value={rule.style?.tooltip || ""}
+                                            onChange={(e) => handleUpdateCFRule(rule.id, {
+                                              style: { ...(rule.style || {}), tooltip: e.target.value }
+                                            })}
+                                            className="w-full bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[9.5px] text-slate-800 font-semibold"
+                                            placeholder="Hover text hint..."
+                                          />
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Custom Alert Colors */}
+                    <div className="space-y-2 border-t border-slate-100 pt-2.5">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono block">Design Color Palettes</span>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                          <span className="text-[9px] font-bold text-emerald-750 block uppercase">Positive Color</span>
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="color"
+                              value={currentSettings.positiveColor || "#10b981"}
+                              onChange={(e) => setSettingsMap(prev => ({
+                                ...prev,
+                                [activeTemplate]: { ...prev[activeTemplate], positiveColor: e.target.value }
+                              }))}
+                              className="w-5 h-5 cursor-pointer rounded border border-slate-205"
+                            />
+                            <span className="text-[10px] font-mono font-medium text-slate-600 uppercase">{currentSettings.positiveColor || "#10b981"}</span>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                          <span className="text-[9px] font-bold text-rose-750 block uppercase">Negative Color</span>
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="color"
+                              value={currentSettings.negativeColor || "#ef4444"}
+                              onChange={(e) => setSettingsMap(prev => ({
+                                ...prev,
+                                [activeTemplate]: { ...prev[activeTemplate], negativeColor: e.target.value }
+                              }))}
+                              className="w-5 h-5 cursor-pointer rounded border border-slate-205"
+                            />
+                            <span className="text-[10px] font-mono font-medium text-slate-600 uppercase">{currentSettings.negativeColor || "#ef4444"}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
                   </div>
                 </div>
               ) : activeTab === "dax" ? (
@@ -567,6 +2063,9 @@ export default function App() {
             onReset={handleResetTemplate}
           />
         </div>
+
+        {/* Dynamic FX formatting popup element */}
+        {renderFxModal()}
 
       </div>
     </div>

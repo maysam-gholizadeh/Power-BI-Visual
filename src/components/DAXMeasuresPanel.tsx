@@ -7,6 +7,26 @@ interface DAXMeasuresPanelProps {
   onChange: (measures: DAXMeasure[]) => void;
 }
 
+export function parseDaxInput(input: string): { name?: string; formula: string } {
+  const trimmed = (input || "").trim();
+  // Match pattern: Name = ... or [Name] = ... or 'Name' = ...
+  // where Name is alphanumeric/spaces, and there's no parenthesis before the '='
+  const eqIdx = trimmed.indexOf("=");
+  const parenIdx = trimmed.indexOf("(");
+  
+  if (eqIdx !== -1 && (parenIdx === -1 || eqIdx < parenIdx)) {
+    const left = trimmed.substring(0, eqIdx).trim();
+    const right = trimmed.substring(eqIdx + 1).trim();
+    
+    // Clean left side name: remove quotes or brackets
+    const name = left.replace(/^['"\[]|['"\]]$/g, "").trim();
+    if (name && right) {
+      return { name, formula: right };
+    }
+  }
+  return { formula: trimmed };
+}
+
 export const DAXMeasuresPanel: React.FC<DAXMeasuresPanelProps> = ({ settings, onChange }) => {
   const measures = settings.daxMeasures || [];
   const [newMeasureName, setNewMeasureName] = useState("");
@@ -35,37 +55,46 @@ export const DAXMeasuresPanel: React.FC<DAXMeasuresPanelProps> = ({ settings, on
     e.preventDefault();
     setError(null);
 
-    const name = newMeasureName.trim();
-    if (!name) {
-      setError("Please provide a name for the DAX measure.");
-      return;
-    }
-
-    if (measures.some(m => m.name.toLowerCase() === name.toLowerCase())) {
-      setError("A column or measure with this name already exists.");
-      return;
-    }
-
-    const formulaExpr = getFormulaForType(templateType).trim();
-    if (templateType === "custom" && !formulaExpr) {
+    const inputFormula = getFormulaForType(templateType).trim();
+    if (templateType === "custom" && !inputFormula) {
       setError("Please specify a calculation formula expression.");
       return;
     }
 
-    // Basic formula check for [Actual] / [Budget]
+    const parsed = parseDaxInput(inputFormula);
+    const finalFormula = parsed.formula.trim();
+    const finalName = (newMeasureName.trim() || parsed.name || "").trim();
+
+    if (!finalName) {
+      setError("Please provide a name for the DAX measure (either in the Title field or as 'Name = Formula').");
+      return;
+    }
+
+    if (measures.some(m => m.name.toLowerCase() === finalName.toLowerCase())) {
+      setError(`A column or measure named "${finalName}" already exists.`);
+      return;
+    }
+
+    // Basic formula check for references
     if (templateType === "custom") {
-      const hasActual = formulaExpr.includes("[Actual]");
-      const hasBudget = formulaExpr.includes("[Budget]");
-      if (!hasActual && !hasBudget) {
-        setError("Custom formulas must reference either [Actual] or [Budget] indicators.");
+      const allowedKeywords = [
+        "[Actual]", "[Budget]", "[Sales]", "[Variance]", "[Profit]", "[VariancePct]",
+        "[Account Code]", "[AccountCode]", "[Code]", "[Account]", "[Category]", "[Name]",
+        "[Description]", "[Account Name]", "[AccountName]"
+      ];
+      const hasKeyword = allowedKeywords.some(keyword => 
+        finalFormula.toLowerCase().includes(keyword.toLowerCase())
+      );
+      if (!hasKeyword) {
+        setError("Custom formulas must reference a table column or attribute (e.g., [Actual], [Budget], or [Account Code]).");
         return;
       }
     }
 
     const newMeasure: DAXMeasure = {
       id: "dax-" + Date.now(),
-      name,
-      formula: formulaExpr,
+      name: finalName,
+      formula: finalFormula,
       expressionType: templateType
     };
 
